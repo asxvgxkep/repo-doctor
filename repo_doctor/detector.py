@@ -1,6 +1,7 @@
 """Project type and verification command discovery."""
 
 import json
+import os
 from pathlib import Path
 
 
@@ -25,11 +26,15 @@ def discover_commands(root: Path, technologies: list[str]) -> list[tuple[str, tu
     package = root / "package.json"
     if "Node.js" in technologies and package.exists():
         try:
-            scripts = json.loads(package.read_text(encoding="utf-8")).get("scripts", {})
-        except (OSError, json.JSONDecodeError):
+            manifest = json.loads(package.read_text(encoding="utf-8"))
+            scripts = manifest.get("scripts", {}) if isinstance(manifest, dict) else {}
+            if not isinstance(scripts, dict):
+                scripts = {}
+        except (OSError, UnicodeError, json.JSONDecodeError):
             scripts = {}
+        npm = "npm.cmd" if os.name == "nt" else "npm"
         if "test" in scripts:
-            commands.append(("Node tests", ("npm", "test", "--", "--runInBand")))
+            commands.append(("Node tests", (npm, "test")))
         if "lint" in scripts:
-            commands.append(("Node lint", ("npm", "run", "lint")))
+            commands.append(("Node lint", (npm, "run", "lint")))
     return commands
