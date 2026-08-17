@@ -1,6 +1,9 @@
 """Markdown report rendering."""
 
+from .ai.models import SemanticFinding
+from .analyzer import AI_CONFIDENCE_THRESHOLD, AI_SCORE_PENALTIES
 from .models import CommandResult, ScanResult
+from .security import redact_sensitive_text
 
 
 def _results(items: list[CommandResult], kind: str) -> str:
@@ -10,11 +13,57 @@ def _results(items: list[CommandResult], kind: str) -> str:
     blocks = []
     for item in selected:
         status = "PASS" if item.passed else "FAIL"
-        output = (item.stdout + item.stderr).strip()[-4000:] or "(no output)"
+        output = redact_sensitive_text((item.stdout + item.stderr).strip()[-4000:]) or "(no output)"
         heading = f"### {item.name}: {status}"
-        detail = f"`{' '.join(item.command)}` — {item.duration:.2f}s, exit {item.exit_code}"
+        detail = f"`{' '.join(item.command)}` - {item.duration:.2f}s, exit {item.exit_code}"
         blocks.append(f"{heading}\n\n{detail}\n\n```text\n{output}\n```")
     return "\n\n".join(blocks)
+
+
+def _ai_finding(item: SemanticFinding, index: int) -> str:
+    lines = (
+        str(item.line_start)
+        if item.line_start == item.line_end
+        else f"{item.line_start}-{item.line_end}"
+    )
+    return f"""### Finding {index}: {item.title}
+
+- Severity: {item.severity.value.title()}
+- Confidence: {item.confidence:.2f}
+- Category: {item.category}
+- File: `{item.file}`
+- Lines: {lines}
+
+Problem:
+{item.explanation}
+
+Evidence:
+{item.evidence}
+
+Suggested fix:
+{item.suggested_fix}"""
+
+
+def _ai_analysis(result: ScanResult) -> str:
+    if not result.ai_requested:
+        return "AI Semantic Analysis: Not requested."
+    if result.ai_error:
+        return result.ai_error
+    if not result.ai_findings:
+        return "AI semantic analysis completed; no concrete findings were returned."
+    return "\n\n".join(_ai_finding(item, index) for index, item in enumerate(result.ai_findings, 1))
+
+
+def _score_explanation(result: ScanResult) -> str:
+    rules = ", ".join(
+        f"{severity.value}={penalty}" for severity, penalty in AI_SCORE_PENALTIES.items()
+    )
+    ai_penalty = result.deterministic_score - result.score
+    return (
+        f"Deterministic score: **{result.deterministic_score}/100**. "
+        f"Validated AI findings at confidence >= {AI_CONFIDENCE_THRESHOLD:.2f} apply fixed "
+        f"penalties ({rules}); applied AI penalty: **{ai_penalty}**."
+    )
 
 
 def render_report(result: ScanResult) -> str:
@@ -56,6 +105,10 @@ Analyzed `{result.path.name}` locally. Inspected configuration: {inspected}.
 
 {chr(10).join(f"- {x}" for x in result.maintainability_issues) or "- None detected."}
 
+## AI Semantic Analysis
+
+{_ai_analysis(result)}
+
 ## Prioritized Recommendations
 
 {recommendations}
@@ -63,4 +116,6 @@ Analyzed `{result.path.name}` locally. Inspected configuration: {inspected}.
 ## Health Score (0-100)
 
 **{result.score}/100**
+
+{_score_explanation(result)}
 """

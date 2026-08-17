@@ -20,6 +20,22 @@ CONFIG_NAMES = {
     ".eslintrc",
     ".eslintrc.json",
 }
+COPY_EXCLUDES = (
+    ".git",
+    "node_modules",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+)
+
+
+def _copy_ignore(directory: str, names: list[str]) -> set[str]:
+    """Exclude tool data and all symlinks from the isolated verification copy."""
+    ignored = set(shutil.ignore_patterns(*COPY_EXCLUDES)(directory, names))
+    parent = Path(directory)
+    ignored.update(name for name in names if (parent / name).is_symlink())
+    return ignored
 
 
 def scan(root: Path, timeout: int = 120) -> ScanResult:
@@ -35,7 +51,14 @@ def scan(root: Path, timeout: int = 120) -> ScanResult:
         except (OSError, UnicodeError):
             pass
     inspected = sorted(
-        path.name for path in files if path.parent == root and path.name in CONFIG_NAMES
+        path.name
+        for path in files
+        if path.parent == root
+        and (
+            path.name in CONFIG_NAMES
+            or path.name.lower() == "readme"
+            or path.name.lower().startswith("readme.")
+        )
     )
     technologies = detect_technologies(root)
     result = ScanResult(root, technologies, len(files), lines, inspected)
@@ -44,9 +67,7 @@ def scan(root: Path, timeout: int = 120) -> ScanResult:
         shutil.copytree(
             root,
             copy,
-            ignore=shutil.ignore_patterns(
-                ".git", "node_modules", ".venv", "__pycache__", ".pytest_cache", ".ruff_cache"
-            ),
+            ignore=_copy_ignore,
         )
         for name, command in discover_commands(copy, technologies):
             result.commands.append(run_command(name, command, copy, timeout))

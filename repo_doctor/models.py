@@ -1,7 +1,13 @@
 """Shared, immutable data models."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .ai.models import SemanticFinding
 
 
 @dataclass(frozen=True)
@@ -33,4 +39,9 @@ class ScanResult:
     commands: list[CommandResult] = field(default_factory=list)
     potential_bugs: list[str] = field(default_factory=list)
     maintainability_issues: list[str] = field(default_factory=list)
+    deterministic_score: int = 100
     score: int = 100
+    ai_requested: bool = False
+    ai_findings: list[SemanticFinding] = field(default_factory=list)
+    ai_error: str | None = None
+    ai_context_files: list[str] = field(default_factory=list)
