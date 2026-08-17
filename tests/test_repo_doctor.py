@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -21,7 +22,7 @@ def test_detect_and_discover() -> None:
 
 def test_scan_and_report_does_not_modify_source(tmp_path: Path) -> None:
     target = tmp_path / "project"
-    subprocess.run(["cp", "-R", str(FIXTURE), str(target)], check=True)
+    shutil.copytree(FIXTURE, target)
     before = {p.relative_to(target): p.read_bytes() for p in target.rglob("*") if p.is_file()}
     result = scan(target)
     after = {p.relative_to(target): p.read_bytes() for p in target.rglob("*") if p.is_file()}
