@@ -1,13 +1,53 @@
 # Repo Doctor
 
-Repo Doctor 0.2 is a local-first repository health checker with an optional AI coding-agent
-workflow. Its deterministic scanner discovers the project stack, runs configured tests and
-linters in an isolated copy, and produces an explainable Markdown report. When explicitly
-enabled, semantic analysis adds validated findings and can propose one minimal repair that is
-kept only after verification succeeds.
+[![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
+![Release v0.2.0](https://img.shields.io/badge/release-v0.2.0-2563eb)
+![Tests: 73 passed, 1 skipped](https://img.shields.io/badge/tests-73%20passed%2C%201%20skipped-16a34a)
 
-The ordinary workflow remains offline: `repo-doctor scan .` never creates an AI provider or
-contacts an external service.
+**Repository diagnostics, optional LLM semantic analysis, and safely verified repair from one
+local-first CLI.**
+
+Deterministic scanning stays local and offline unless `--ai` is explicitly enabled; without that
+flag, Repo Doctor never initializes an AI provider or contacts an external service.
+
+## Quick Demo
+
+```console
+repo-doctor scan .
+repo-doctor scan . --ai
+repo-doctor fix . --ai --dry-run
+repo-doctor fix . --ai
+```
+
+The first command runs deterministic checks only; the others explicitly opt into semantic analysis
+or repair. For an AI fix, Repo Doctor selects at most one high-confidence issue, generates a
+constrained patch, and reruns verification. It keeps the change only when verification succeeds;
+otherwise it restores the exact original bytes.
+
+## AI Repair in Action
+
+A real end-to-end repair: Repo Doctor previews a constrained AI patch, applies it, reruns verification, and keeps the change only after the checks pass.
+
+![Repo Doctor AI repair demo](docs/demo.png)
+
+## Why Repo Doctor?
+
+- **Deterministic health checks** discover the stack and run supported tests and linters in an
+  isolated repository copy.
+- **Opt-in LLM analysis** adds semantic review only when `--ai` is present.
+- **Structured, confidence-gated findings** turn provider output into validated, explainable data.
+- **Secret-aware bounded context** limits which files and how much source can leave the machine.
+- **Constrained patch generation** permits one bounded text replacement, never provider-supplied
+  shell commands.
+- **Verification and automatic rollback** keep a repair only if every discovered check passes and
+  the deterministic score does not regress.
+
+## Verified in v0.2.0
+
+- Automated test suite: **73 passed, 1 skipped**.
+- Repo Doctor self-scan: **100/100**.
+- Real DeepSeek API semantic analysis and AI dry-run tested.
+- Real AI fix, verification, and keep workflow tested end to end.
 
 ## Requirements and installation
 
