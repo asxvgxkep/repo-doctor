@@ -8,7 +8,12 @@ from typing import Any
 from .errors import ProviderError, ResponseValidationError
 from .models import AnalysisRequest, AnalysisResponse, PatchProposal, PatchRequest
 from .parser import parse_analysis_response, parse_patch_response
-from .prompts import analysis_messages, patch_messages
+from .prompts import (
+    DEFAULT_PROMPT_VARIANT,
+    analysis_messages,
+    patch_messages,
+    prompt_profile,
+)
 
 MAX_RESPONSE_BYTES = 2_000_000
 DEFAULT_REQUEST_TIMEOUT = 180.0
@@ -23,6 +28,10 @@ class OpenAICompatibleProvider:
     model: str
     timeout: float = DEFAULT_REQUEST_TIMEOUT
     transport: Any = None
+    prompt_variant: str = DEFAULT_PROMPT_VARIANT
+
+    def __post_init__(self) -> None:
+        prompt_profile(self.prompt_variant)
 
     @property
     def endpoint(self) -> str:
@@ -71,7 +80,11 @@ class OpenAICompatibleProvider:
         return content
 
     def analyze(self, request: AnalysisRequest) -> AnalysisResponse:
-        return parse_analysis_response(self._complete(analysis_messages(request)))
+        return parse_analysis_response(
+            self._complete(analysis_messages(request, self.prompt_variant))
+        )
 
     def generate_patch(self, request: PatchRequest) -> PatchProposal:
-        return parse_patch_response(self._complete(patch_messages(request)))
+        return parse_patch_response(
+            self._complete(patch_messages(request, self.prompt_variant))
+        )

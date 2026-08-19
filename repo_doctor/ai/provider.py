@@ -8,6 +8,7 @@ from typing import Protocol
 
 from .errors import AIConfigurationError
 from .models import AnalysisRequest, AnalysisResponse, PatchProposal, PatchRequest
+from .prompts import DEFAULT_PROMPT_VARIANT, prompt_profile
 
 
 class LLMProvider(Protocol):
@@ -22,8 +23,11 @@ class LLMProvider(Protocol):
         ...
 
 
-def provider_from_env() -> LLMProvider:
+def provider_from_env(
+    prompt_variant: str = DEFAULT_PROMPT_VARIANT,
+) -> LLMProvider:
     """Build the OpenAI-compatible provider without exposing configuration values."""
+    prompt_profile(prompt_variant)
     names = ("REPO_DOCTOR_API_KEY", "REPO_DOCTOR_BASE_URL", "REPO_DOCTOR_MODEL")
     values = {name: os.environ.get(name, "").strip() for name in names}
     missing = [name for name in names if not values[name]]
@@ -54,4 +58,5 @@ def provider_from_env() -> LLMProvider:
         base_url=values["REPO_DOCTOR_BASE_URL"],
         model=values["REPO_DOCTOR_MODEL"],
         timeout=timeout,
+        prompt_variant=prompt_variant,
     )
