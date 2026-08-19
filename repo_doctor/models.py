@@ -26,6 +26,7 @@ class CommandResult:
     approval_status: str | None = None
     message: str = ""
     executed: bool = True
+    trace_id: str | None = None
 
     @property
     def passed(self) -> bool:
@@ -40,6 +41,29 @@ class FileReadResult:
     size: int
     sha256: str
     content: str
+
+
+@dataclass(frozen=True)
+class PatchMutationResult:
+    """Structured result of a ToolHub filesystem patch request or execution."""
+
+    path: str
+    executed: bool
+    changed: bool = False
+    additions: int = 0
+    deletions: int = 0
+    bytes_before: int = 0
+    bytes_after: int = 0
+    previous_hash: str | None = None
+    new_hash: str | None = None
+    trace_id: str | None = None
+    request_id: str | None = None
+    approval_status: str | None = None
+    message: str = ""
+
+    @property
+    def approval_required(self) -> bool:
+        return not self.executed and self.approval_status == "PENDING"
 
 
 @dataclass(frozen=True)

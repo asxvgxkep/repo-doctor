@@ -37,6 +37,7 @@ An MCP backend is available for scans when MCP ToolHub is installed at `D:\mcp-t
 
 ```console
 repo-doctor scan D:\target-repository --tool-backend mcp
+repo-doctor fix D:\target-repository --ai --tool-backend mcp
 ```
 
 Repo Doctor starts ToolHub over stdio and explicitly sets `TOOLHUB_WORKSPACE_ROOT` to the canonical
@@ -69,8 +70,25 @@ the next request, so a later resume neither waits for every approval nor replays
 Session files contain report context and ToolHub-returned states, but no local approval flag or
 self-approval mechanism. ToolHub remains authoritative for approval and replay protection.
 
-MCP repair application is intentionally outside the v1 integration scope, so `fix` continues to use
-the existing local verification and rollback transaction.
+For an MCP AI repair, Repo Doctor diagnoses the issue, rereads the selected target through
+`filesystem.read_file`, validates the proposal against those exact bytes, and submits a unified
+patch through `filesystem.apply_patch`. Every existing-file repair includes ToolHub's returned
+SHA-256 as `expected_hash`; a stale hash is a terminal `PATCH_CONFLICT` and never triggers a forced
+write. The pending repair session stores request IDs, the fixed canonical workspace, hashes,
+finding metadata, bounded results, and trace IDs, but not the patch body or a local approval flag.
+
+After out-of-band approval, the same `repo-doctor resume <session-id>` command calls only
+`filesystem.apply_patch_approved(request_id)`. Once ToolHub applies and consumes the immutable
+request, Repo Doctor submits the discovered verification commands through `shell.run`. Any pending
+test or lint approvals are appended to that same repair session. Completed verification is followed
+by ToolHub `git.diff`, whose bounded summary remains available for operator review and audit
+correlation.
+
+MCP repair v1 deliberately does not perform a hidden local rollback. If ToolHub has applied the
+approved patch and verification later fails, the session ends in `VERIFICATION_FAILED` and leaves
+the change visible in ToolHub's Git diff. A correction or revert therefore remains an explicit,
+reviewable follow-up. Local repair remains the default and preserves its existing exact-byte
+rollback behavior.
 
 ## AI Repair in Action
 
@@ -242,11 +260,12 @@ requires that:
 - `old_text` occurs exactly once;
 - confidence is at least 0.85 and replacement size limits are respected.
 
-Repo Doctor captures the target's exact bytes, applies the replacement atomically, and reruns the
-same discovered verification commands in an isolated copy. It keeps the edit only when every
-command passes and the deterministic score does not regress. Failure or a verification exception
-restores the exact captured bytes. A rollback failure is reported explicitly and requires manual
-Git restoration.
+In default local mode, Repo Doctor captures the target's exact bytes, applies the replacement
+atomically, and reruns the same discovered verification commands in an isolated copy. It keeps the
+edit only when every command passes and the deterministic score does not regress. Failure or a
+verification exception restores the exact captured bytes. A rollback failure is reported
+explicitly and requires manual Git restoration. In MCP mode, ToolHub owns mutation and in-place
+verification as described above; verification failure is reported without an automatic rollback.
 
 ## Security model
 
@@ -302,7 +321,7 @@ opt-in and keeps its approval/audit state in the pytest temporary directory:
 
 ```powershell
 $env:REPO_DOCTOR_RUN_TOOLHUB_INTEGRATION = "1"
-uv run --extra dev python -m pytest -m integration tests/test_tool_backends.py
+uv run --extra dev python -m pytest -m integration
 ```
 
 AI tests use fake providers and the semantic fixture under `tests/fixtures/semantic_bug`. The

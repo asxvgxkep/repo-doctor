@@ -22,6 +22,7 @@ from .models import (
     GitDiffResult,
     GitStatusEntry,
     GitStatusResult,
+    PatchMutationResult,
 )
 from .runner import run_command as run_local_command
 from .security import verification_environment
@@ -44,6 +45,10 @@ class ToolCallError(ToolBackendError):
 
 class FileReadError(ToolCallError):
     """A text file selected by Repo Doctor could not be read."""
+
+
+class MutationConflictError(ToolCallError):
+    """ToolHub refused a mutation because its optimistic hash was stale."""
 
 
 class ToolBackendKind(StrEnum):
@@ -473,6 +478,50 @@ class MCPToolBackend:
             fallback_request_id=request_id,
         )
 
+    def apply_patch(
+        self,
+        path: str,
+        patch: str,
+        expected_hash: str,
+    ) -> PatchMutationResult:
+        """Submit one validated patch with mandatory optimistic concurrency."""
+        relative = _relative_path(path)
+        _sha256(expected_hash)
+        if not patch or "\x00" in patch:
+            raise ToolCallError("Backend patch must be non-empty text without null bytes.")
+        try:
+            payload = self._call(
+                "filesystem.apply_patch",
+                {
+                    "path": relative,
+                    "patch": patch,
+                    "expected_hash": expected_hash,
+                },
+            )
+        except ToolCallError as error:
+            if "conflict:" in str(error).casefold():
+                raise MutationConflictError(str(error)) from error
+            raise
+        return _patch_mutation_result(payload, fallback_path=relative)
+
+    def run_approved_mutation(self, request_id: str) -> PatchMutationResult:
+        """Execute only the immutable mutation snapshot stored by ToolHub."""
+        _approval_request_id(request_id)
+        try:
+            payload = self._call(
+                "filesystem.apply_patch_approved",
+                {"request_id": request_id},
+            )
+        except ToolCallError as error:
+            if "conflict:" in str(error).casefold():
+                raise MutationConflictError(str(error)) from error
+            raise
+        return _patch_mutation_result(
+            payload,
+            fallback_path="",
+            fallback_request_id=request_id,
+        )
+
     def git_status(self) -> GitStatusResult:
         payload = self._call("git.status", {})
         try:
@@ -545,6 +594,9 @@ def _shell_command_result(
         request_id = payload.get("request_id", fallback_request_id)
         if request_id is not None and not isinstance(request_id, str):
             raise TypeError("request_id must be text or null")
+        trace_id = payload.get("trace_id")
+        if trace_id is not None and not isinstance(trace_id, str):
+            raise TypeError("trace_id must be text or null")
         return CommandResult(
             name=name,
             command=command,
@@ -558,9 +610,78 @@ def _shell_command_result(
             approval_status=approval_status,
             message=str(payload.get("message", "")),
             executed=executed,
+            trace_id=trace_id,
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ToolCallError("ToolHub returned an invalid shell result.") from error
+
+
+def _approval_request_id(request_id: str) -> str:
+    if (
+        not isinstance(request_id, str)
+        or not request_id
+        or len(request_id) > 512
+        or any(ord(character) < 32 for character in request_id)
+    ):
+        raise ToolCallError("ToolHub approval request ID must be non-empty bounded text.")
+    return request_id
+
+
+def _sha256(value: str) -> str:
+    if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+        raise ToolCallError("Expected hash must be a lowercase SHA-256 digest.")
+    return value
+
+
+def _patch_mutation_result(
+    payload: dict[str, Any],
+    *,
+    fallback_path: str,
+    fallback_request_id: str | None = None,
+) -> PatchMutationResult:
+    """Validate and map a ToolHub filesystem mutation response."""
+    try:
+        executed = payload["executed"]
+        if not isinstance(executed, bool):
+            raise TypeError("executed must be a boolean")
+        changed = payload.get("changed", False)
+        if not isinstance(changed, bool):
+            raise TypeError("changed must be a boolean")
+        path = payload.get("path", fallback_path)
+        if not isinstance(path, str):
+            raise TypeError("path must be text")
+        request_id = payload.get("request_id", fallback_request_id)
+        if request_id is not None and not isinstance(request_id, str):
+            raise TypeError("request_id must be text or null")
+        approval_status = payload.get("approval_status")
+        if approval_status is not None and not isinstance(approval_status, str):
+            raise TypeError("approval_status must be text or null")
+        trace_id = payload.get("trace_id")
+        if trace_id is not None and not isinstance(trace_id, str):
+            raise TypeError("trace_id must be text or null")
+        previous_hash = payload.get("previous_hash")
+        new_hash = payload.get("new_hash")
+        if previous_hash is not None:
+            _sha256(str(previous_hash))
+        if new_hash is not None:
+            _sha256(str(new_hash))
+        return PatchMutationResult(
+            path=path or fallback_path,
+            executed=executed,
+            changed=changed,
+            additions=int(payload.get("additions", 0)),
+            deletions=int(payload.get("deletions", 0)),
+            bytes_before=int(payload.get("bytes_before", 0)),
+            bytes_after=int(payload.get("bytes_after", 0)),
+            previous_hash=str(previous_hash) if previous_hash is not None else None,
+            new_hash=str(new_hash) if new_hash is not None else None,
+            trace_id=trace_id,
+            request_id=request_id or fallback_request_id,
+            approval_status=approval_status,
+            message=str(payload.get("message", "")),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ToolCallError("ToolHub returned an invalid filesystem patch result.") from error
 
 
 def create_tool_backend(kind: ToolBackendKind, root: Path) -> ToolBackend:

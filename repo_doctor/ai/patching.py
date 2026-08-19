@@ -56,10 +56,7 @@ def _validate_proposal_object(proposal: PatchProposal) -> PatchProposal:
         raise PatchValidationError(str(error)) from error
 
 
-def prepare_patch(
-    root: Path, proposal: PatchProposal, *, expected_sha256: str | None = None
-) -> PreparedPatch:
-    """Validate an untrusted proposal without modifying the target file."""
+def _validated_patch_metadata(proposal: PatchProposal) -> tuple[PatchProposal, str]:
     proposal = _validate_proposal_object(proposal)
     try:
         relative = normalize_relative_path(proposal.file)
@@ -73,6 +70,35 @@ def prepare_patch(
         raise PatchValidationError("Patch replacement is too large.")
     if abs(len(proposal.new_text) - len(proposal.old_text)) > MAX_SIZE_CHANGE:
         raise PatchValidationError("Patch changes too much content in one replacement.")
+    return proposal, relative
+
+
+def _prepared_from_text(
+    root: Path,
+    target: Path,
+    relative: str,
+    proposal: PatchProposal,
+    original: bytes,
+) -> PreparedPatch:
+    if len(original) > MAX_TARGET_BYTES or b"\x00" in original:
+        raise PatchValidationError("Patch target is too large or is not a text file.")
+    try:
+        text = original.decode("utf-8")
+    except UnicodeError as error:
+        raise PatchValidationError("Patch target is not UTF-8 text.") from error
+    occurrences = text.count(proposal.old_text)
+    if occurrences != 1:
+        detail = "was not found" if occurrences == 0 else "is ambiguous"
+        raise PatchValidationError(f"Patch old_text {detail}; expected exactly one occurrence.")
+    updated = text.replace(proposal.old_text, proposal.new_text, 1).encode("utf-8")
+    return PreparedPatch(root, target, relative, proposal, original, updated)
+
+
+def prepare_patch(
+    root: Path, proposal: PatchProposal, *, expected_sha256: str | None = None
+) -> PreparedPatch:
+    """Validate an untrusted proposal without modifying the target file."""
+    proposal, relative = _validated_patch_metadata(proposal)
 
     root = root.resolve()
     target = root.joinpath(*PurePosixPath(relative).parts)
@@ -88,20 +114,40 @@ def prepare_patch(
         original = resolved.read_bytes()
     except OSError as error:
         raise PatchValidationError(f"Could not read patch target: {relative}.") from error
-    if len(original) > MAX_TARGET_BYTES or b"\x00" in original:
-        raise PatchValidationError("Patch target is too large or is not a text file.")
     if expected_sha256 and hashlib.sha256(original).hexdigest() != expected_sha256:
         raise PatchValidationError("Target file changed after AI analysis; run the command again.")
-    try:
-        text = original.decode("utf-8")
-    except UnicodeError as error:
-        raise PatchValidationError("Patch target is not UTF-8 text.") from error
-    occurrences = text.count(proposal.old_text)
-    if occurrences != 1:
-        detail = "was not found" if occurrences == 0 else "is ambiguous"
-        raise PatchValidationError(f"Patch old_text {detail}; expected exactly one occurrence.")
-    updated = text.replace(proposal.old_text, proposal.new_text, 1).encode("utf-8")
-    return PreparedPatch(root, resolved, relative, proposal, original, updated)
+    return _prepared_from_text(root, resolved, relative, proposal, original)
+
+
+def prepare_patch_from_content(
+    root: Path,
+    proposal: PatchProposal,
+    *,
+    content: str,
+    expected_sha256: str,
+) -> PreparedPatch:
+    """Validate a proposal solely against the exact content returned by ToolHub.
+
+    This path deliberately performs no target-file reads or writes. ToolHub is
+    responsible for resolving the target and enforcing the same SHA-256 again
+    at approved execution time.
+    """
+    proposal, relative = _validated_patch_metadata(proposal)
+    if not isinstance(content, str):
+        raise PatchValidationError("ToolHub patch context must be UTF-8 text.")
+    if (
+        not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_sha256)
+    ):
+        raise PatchValidationError("ToolHub returned an invalid SHA-256 for the patch target.")
+    # ToolHub's hash covers raw bytes while its text result uses Python's
+    # universal-newline decoding. On Windows, valid CRLF bytes therefore
+    # intentionally re-encode differently from the authoritative hash.
+    original = content.encode("utf-8")
+    resolved_root = root.resolve()
+    target = resolved_root.joinpath(*PurePosixPath(relative).parts)
+    return _prepared_from_text(resolved_root, target, relative, proposal, original)
 
 
 def _atomic_write(path: Path, data: bytes) -> None:

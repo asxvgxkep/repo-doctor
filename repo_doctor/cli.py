@@ -8,11 +8,21 @@ from rich.console import Console
 
 from .ai.errors import AIError
 from .ai.fixer import execute_ai_fix
+from .ai.mcp_fixer import execute_mcp_ai_fix
 from .ai.prompts import DEFAULT_PROMPT_VARIANT, prompt_profile
 from .ai.provider import provider_from_env
 from .ai.workflow import analyze_repository
 from .backends import ToolBackendError, ToolBackendKind, create_tool_backend
 from .fixer import apply_high_confidence_fix, verify_clean_git
+from .repair_sessions import (
+    RepairOperationKind,
+    RepairPhase,
+    RepairSession,
+    is_repair_session,
+    load_repair_session,
+    render_repair_session,
+    resume_repair_session,
+)
 from .report import render_report
 from .scanner import scan
 from .sessions import (
@@ -78,8 +88,27 @@ def resume_command(
     session_id: str,
     output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
 ) -> None:
-    """Resume pending ToolHub verification requests for a saved MCP scan."""
+    """Resume pending ToolHub scan or AI repair requests."""
     try:
+        if is_repair_session(session_id):
+            repair = load_repair_session(session_id)
+            with console.status("[cyan]Checking ToolHub repair approvals…"):
+                resume_repair_session(repair)
+            report = render_repair_session(repair)
+            if output:
+                output.write_text(report, encoding="utf-8")
+                console.print(f"[green]Report written to {output}[/green]")
+            else:
+                console.print(report)
+            if repair.pending_operations:
+                _print_repair_approval_instructions(repair)
+            elif repair.phase is RepairPhase.VERIFIED_PASS:
+                console.print("[green]Repair verification passed.[/green]")
+            else:
+                console.print(
+                    f"[yellow]Repair stopped in state {repair.phase.value.upper()}.[/yellow]"
+                )
+            return
         session = load_session(session_id)
         with console.status("[cyan]Checking ToolHub approvals…"):
             resume_scan_session(session)
@@ -119,6 +148,28 @@ def _print_approval_instructions(session: ScanSession) -> None:
     console.print(f"  repo-doctor resume {session.session_id}", markup=False)
 
 
+def _print_repair_approval_instructions(session: RepairSession) -> None:
+    patch_pending = any(
+        item.kind is RepairOperationKind.PATCH for item in session.pending_operations
+    )
+    heading = "Patch approval required." if patch_pending else "Verification approval required."
+    console.print(f"\n[yellow]{heading}[/yellow]")
+    console.print("\nSession:")
+    console.print(f"  {session.session_id}", markup=False)
+    console.print("\nFinding:")
+    console.print(f"  {session.finding_id} - {session.finding_title}", markup=False)
+    console.print("\nFile:")
+    console.print(f"  {session.target_file}", markup=False)
+    for operation in session.pending_operations:
+        console.print(f"\n{operation.name}:", markup=False)
+        console.print(f"  Request: {operation.request_id}", markup=False)
+    console.print("\nApprove with ToolHub's trusted admin CLI:")
+    console.print(r"  cd D:\mcp-toolhub", markup=False)
+    console.print("  uv run python -m toolhub.admin approve <request_id>", markup=False)
+    console.print("\nResume:")
+    console.print(f"  repo-doctor resume {session.session_id}", markup=False)
+
+
 @app.command()
 def fix(
     repository_path: Path,
@@ -134,6 +185,10 @@ def fix(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Preview an AI patch without modifying files.")
     ] = False,
+    tool_backend: Annotated[
+        ToolBackendKind,
+        typer.Option("--tool-backend", help="Tool execution backend: local or mcp."),
+    ] = ToolBackendKind.LOCAL,
 ) -> None:
     """Apply one safe fix to a clean Git repository, then verify it."""
     root = repository_path.resolve()
@@ -141,7 +196,33 @@ def fix(
         prompt_profile(prompt_variant)
         if dry_run and not ai:
             raise ValueError("--dry-run is available only with --ai.")
+        if tool_backend is ToolBackendKind.MCP and not ai:
+            raise ValueError("--tool-backend mcp currently requires --ai in fix mode.")
         if ai:
+            if tool_backend is ToolBackendKind.MCP:
+                outcome = execute_mcp_ai_fix(
+                    root,
+                    provider_from_env(prompt_variant=prompt_variant),
+                    timeout=timeout,
+                    dry_run=dry_run,
+                )
+                if outcome.status == "no_candidate":
+                    console.print("[yellow]No high-confidence AI fix is available.[/yellow]")
+                elif outcome.status == "dry_run":
+                    console.print("[cyan]Proposed patch (dry run; no files changed):[/cyan]")
+                    console.print(outcome.diff)
+                elif outcome.session is not None:
+                    console.print(render_repair_session(outcome.session))
+                    if outcome.session.pending_operations:
+                        _print_repair_approval_instructions(outcome.session)
+                    elif outcome.session.phase is RepairPhase.VERIFIED_PASS:
+                        console.print("[green]Repair verification passed.[/green]")
+                    else:
+                        console.print(
+                            "[yellow]Repair stopped in state "
+                            f"{outcome.session.phase.value.upper()}.[/yellow]"
+                        )
+                return
             outcome = execute_ai_fix(
                 root,
                 provider_from_env(prompt_variant=prompt_variant),
@@ -177,7 +258,7 @@ def fix(
         else:
             console.print(f"[red]Verification failed after fix:[/red] {change}")
             raise typer.Exit(1)
-    except (AIError, OSError, ValueError) as error:
+    except (AIError, OSError, ToolBackendError, ValueError) as error:
         console.print(f"[red]Error: {error}[/red]")
         raise typer.Exit(2) from error
 

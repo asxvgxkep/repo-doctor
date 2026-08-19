@@ -44,6 +44,8 @@ def scan(
     root: Path,
     timeout: int = 120,
     backend: ToolBackend | None = None,
+    *,
+    verify: bool = True,
 ) -> ScanResult:
     """Inspect *root* and verify a temporary copy, leaving the source untouched."""
     root = root.resolve()
@@ -70,7 +72,9 @@ def scan(
         )
         technologies = detect_technologies(root)
         result = ScanResult(root, technologies, len(files), lines, inspected)
-        if backend.verification_in_place:
+        if not verify:
+            pass
+        elif backend.verification_in_place:
             for name, command in discover_commands(root, technologies):
                 result.commands.append(backend.run_command(name, command, ".", timeout))
         else:
