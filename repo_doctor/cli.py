@@ -10,6 +10,7 @@ from .ai.errors import AIError
 from .ai.fixer import execute_ai_fix
 from .ai.provider import provider_from_env
 from .ai.workflow import analyze_repository
+from .backends import ToolBackendError, ToolBackendKind, create_tool_backend
 from .fixer import apply_high_confidence_fix, verify_clean_git
 from .report import render_report
 from .scanner import scan
@@ -24,11 +25,19 @@ def scan_command(
     output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
     timeout: int = 120,
     ai: Annotated[bool, typer.Option("--ai", help="Enable configured semantic analysis.")] = False,
+    tool_backend: Annotated[
+        ToolBackendKind,
+        typer.Option("--tool-backend", help="Tool execution backend: local or mcp."),
+    ] = ToolBackendKind.LOCAL,
 ) -> None:
     """Scan REPOSITORY_PATH without modifying it."""
     try:
         with console.status("[cyan]Examining repository…"):
-            result = scan(repository_path, timeout)
+            if tool_backend is ToolBackendKind.LOCAL:
+                result = scan(repository_path, timeout)
+            else:
+                backend = create_tool_backend(tool_backend, repository_path)
+                result = scan(repository_path, timeout, backend=backend)
             if ai:
                 result.ai_requested = True
                 try:
@@ -42,7 +51,7 @@ def scan_command(
         else:
             console.print(report)
         console.print(f"[bold]Health score: {result.score}/100[/bold]")
-    except (OSError, ValueError) as error:
+    except (OSError, ToolBackendError, ValueError) as error:
         console.print(f"[red]Error: {error}[/red]")
         raise typer.Exit(2) from error
 

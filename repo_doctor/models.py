@@ -21,10 +21,55 @@ class CommandResult:
     stderr: str
     duration: float
     timed_out: bool = False
+    approval_required: bool = False
+    request_id: str | None = None
+    approval_status: str | None = None
+    message: str = ""
 
     @property
     def passed(self) -> bool:
         return self.exit_code == 0 and not self.timed_out
+
+
+@dataclass(frozen=True)
+class FileReadResult:
+    """One UTF-8 file returned by a tool backend."""
+
+    path: str
+    size: int
+    sha256: str
+    content: str
+
+
+@dataclass(frozen=True)
+class GitStatusEntry:
+    """One porcelain Git status entry."""
+
+    code: str
+    path: str
+
+
+@dataclass(frozen=True)
+class GitStatusResult:
+    """Structured Git worktree status."""
+
+    path: str
+    branch: str | None
+    clean: bool
+    entries: tuple[GitStatusEntry, ...]
+    raw: str
+
+
+@dataclass(frozen=True)
+class GitDiffResult:
+    """Structured Git diff output."""
+
+    path: str | None
+    staged: bool
+    additions: int | None
+    deletions: int | None
+    binary: bool
+    raw: str
 
 
 @dataclass

@@ -13,6 +13,8 @@ AI_SCORE_PENALTIES = {
     Severity.LOW: 0,
 }
 
+TEXT_PROBE_CHUNK_SIZE = 64 * 1024
+
 
 def analyze(result: ScanResult) -> None:
     """Annotate and score collected evidence."""
@@ -20,7 +22,12 @@ def analyze(result: ScanResult) -> None:
         result.maintainability_issues.append("No README was found at the repository root.")
     if not result.technologies:
         result.maintainability_issues.append("No supported project manifest was detected.")
-    failed = [item for item in result.commands if not item.passed]
+    approvals = [item for item in result.commands if item.approval_required]
+    failed = [item for item in result.commands if not item.passed and not item.approval_required]
+    for item in approvals:
+        result.potential_bugs.append(
+            f"{item.name} requires ToolHub approval (request {item.request_id or 'unknown'})."
+        )
     for item in failed:
         result.potential_bugs.append(f"{item.name} failed with exit code {item.exit_code}.")
     if not result.commands:
@@ -42,7 +49,7 @@ def apply_ai_score(result: ScanResult) -> None:
 
 
 def text_files(root: Path):
-    """Yield small source/config text files while skipping tool metadata."""
+    """Yield small regular-file candidates while skipping tool metadata."""
     ignored = {
         ".git",
         "node_modules",
@@ -60,3 +67,19 @@ def text_files(root: Path):
             and path.stat().st_size <= 1_000_000
         ):
             yield path
+
+
+def is_utf8_text_file(path: Path) -> bool:
+    """Return whether *path* satisfies Repo Doctor's strict text scanning policy.
+
+    Decode failures mean that the file is intentionally outside the scanner's
+    text domain. Filesystem failures deliberately propagate so disappearance,
+    permission, and workspace problems are never mistaken for binary files.
+    """
+    try:
+        with path.open(encoding="utf-8") as stream:
+            while stream.read(TEXT_PROBE_CHUNK_SIZE):
+                pass
+    except UnicodeError:
+        return False
+    return True

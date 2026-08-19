@@ -4,7 +4,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from .analyzer import analyze, text_files
+from .analyzer import analyze, is_utf8_text_file, text_files
+from .backends import LocalToolBackend, ToolBackend
 from .detector import detect_technologies, discover_commands
 from .models import ScanResult
 from .runner import run_command
@@ -38,38 +39,48 @@ def _copy_ignore(directory: str, names: list[str]) -> set[str]:
     return ignored
 
 
-def scan(root: Path, timeout: int = 120) -> ScanResult:
+def scan(
+    root: Path,
+    timeout: int = 120,
+    backend: ToolBackend | None = None,
+) -> ScanResult:
     """Inspect *root* and verify a temporary copy, leaving the source untouched."""
     root = root.resolve()
     if not root.is_dir():
         raise ValueError(f"Repository path is not a directory: {root}")
+    backend = backend or LocalToolBackend(root)
     files = list(text_files(root))
     lines = 0
-    for path in files:
-        try:
-            lines += sum(1 for _ in path.open(encoding="utf-8"))
-        except (OSError, UnicodeError):
-            pass
-    inspected = sorted(
-        path.name
-        for path in files
-        if path.parent == root
-        and (
-            path.name in CONFIG_NAMES
-            or path.name.lower() == "readme"
-            or path.name.lower().startswith("readme.")
+    with backend:
+        for path in files:
+            if not is_utf8_text_file(path):
+                continue
+            content = backend.read_file(path.relative_to(root).as_posix()).content
+            lines += len(content.splitlines())
+        inspected = sorted(
+            path.name
+            for path in files
+            if path.parent == root
+            and (
+                path.name in CONFIG_NAMES
+                or path.name.lower() == "readme"
+                or path.name.lower().startswith("readme.")
+            )
         )
-    )
-    technologies = detect_technologies(root)
-    result = ScanResult(root, technologies, len(files), lines, inspected)
-    with tempfile.TemporaryDirectory(prefix="repo-doctor-") as temporary:
-        copy = Path(temporary) / "repository"
-        shutil.copytree(
-            root,
-            copy,
-            ignore=_copy_ignore,
-        )
-        for name, command in discover_commands(copy, technologies):
-            result.commands.append(run_command(name, command, copy, timeout))
+        technologies = detect_technologies(root)
+        result = ScanResult(root, technologies, len(files), lines, inspected)
+        if backend.verification_in_place:
+            for name, command in discover_commands(root, technologies):
+                result.commands.append(backend.run_command(name, command, ".", timeout))
+        else:
+            with tempfile.TemporaryDirectory(prefix="repo-doctor-") as temporary:
+                copy = Path(temporary) / "repository"
+                shutil.copytree(
+                    root,
+                    copy,
+                    ignore=_copy_ignore,
+                )
+                for name, command in discover_commands(copy, technologies):
+                    result.commands.append(run_command(name, command, copy, timeout))
     analyze(result)
     return result

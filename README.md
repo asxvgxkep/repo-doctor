@@ -25,6 +25,34 @@ or repair. For an AI fix, Repo Doctor selects at most one high-confidence issue,
 constrained patch, and reruns verification. It keeps the change only when verification succeeds;
 otherwise it restores the exact original bytes.
 
+## Tool execution backends
+
+Local execution remains the default and requires no ToolHub process:
+
+```console
+repo-doctor scan . --tool-backend local
+```
+
+An MCP backend is available for scans when MCP ToolHub is installed at `D:\mcp-toolhub`:
+
+```console
+repo-doctor scan D:\target-repository --tool-backend mcp
+```
+
+Repo Doctor starts ToolHub over stdio and explicitly sets `TOOLHUB_WORKSPACE_ROOT` to the canonical
+absolute target repository. The workspace is fixed for that session and cannot be replaced by an
+individual tool call. Repository-defined test and lint commands that ToolHub classifies as requiring
+approval are reported with their request ID; Repo Doctor never approves or silently executes them.
+The trusted administrator command remains:
+
+```powershell
+cd D:\mcp-toolhub
+uv run python -m toolhub.admin approve <request_id>
+```
+
+MCP repair application is intentionally outside the v1 integration scope, so `fix` continues to use
+the existing local verification and rollback transaction.
+
 ## AI Repair in Action
 
 A real end-to-end repair: Repo Doctor previews a constrained AI patch, applies it, reruns verification, and keeps the change only after the checks pass.

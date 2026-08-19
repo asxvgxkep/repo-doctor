@@ -12,8 +12,16 @@ def _results(items: list[CommandResult], kind: str) -> str:
         return "No commands discovered."
     blocks = []
     for item in selected:
-        status = "PASS" if item.passed else "FAIL"
-        output = redact_sensitive_text((item.stdout + item.stderr).strip()[-4000:]) or "(no output)"
+        if item.approval_required:
+            status = "APPROVAL REQUIRED"
+            approval = f"Request ID: {item.request_id or 'unknown'}\n{item.message}".strip()
+        else:
+            status = "PASS" if item.passed else "FAIL"
+            approval = ""
+        combined_output = "\n".join(
+            value for value in (item.stdout, item.stderr, approval) if value
+        )
+        output = redact_sensitive_text(combined_output.strip()[-4000:]) or "(no output)"
         heading = f"### {item.name}: {status}"
         detail = f"`{' '.join(item.command)}` - {item.duration:.2f}s, exit {item.exit_code}"
         blocks.append(f"{heading}\n\n{detail}\n\n```text\n{output}\n```")

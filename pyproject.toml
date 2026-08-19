@@ -8,7 +8,7 @@ version = "0.2.0"
 description = "A safe repository health checker with optional AI-assisted repair"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["typer>=0.12", "rich>=13.7", "httpx>=0.27"]
+dependencies = ["typer>=0.12", "rich>=13.7", "httpx>=0.27", "mcp>=2.0.0"]
 
 [project.scripts]
 repo-doctor = "repo_doctor.cli:app"
@@ -20,6 +20,7 @@ dev = ["pytest>=8", "ruff>=0.6"]
 testpaths = ["tests"]
 addopts = "-q"
 norecursedirs = ["tests/fixtures"]
+markers = ["integration: opt-in tests using an external ToolHub process"]
 
 [tool.ruff]
 target-version = "py312"
