@@ -129,7 +129,9 @@ def test_mcp_scan_with_pending_command_creates_cli_session(
 def test_session_stores_multiple_requests_and_canonical_target(
     tmp_path: Path, state_root_dir: Path
 ) -> None:
-    noncanonical = tmp_path / "child" / ".."
+    child = tmp_path / "child"
+    child.mkdir()
+    noncanonical = child / ".."
     session = pending_session(noncanonical, two=True)
     loaded = load_session(session.session_id)
 
