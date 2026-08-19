@@ -18,18 +18,29 @@ TEXT_PROBE_CHUNK_SIZE = 64 * 1024
 
 def analyze(result: ScanResult) -> None:
     """Annotate and score collected evidence."""
+    result.potential_bugs.clear()
+    result.maintainability_issues.clear()
     if not any(name.lower().startswith("readme") for name in result.inspected_files):
         result.maintainability_issues.append("No README was found at the repository root.")
     if not result.technologies:
         result.maintainability_issues.append("No supported project manifest was detected.")
     approvals = [item for item in result.commands if item.approval_required]
-    failed = [item for item in result.commands if not item.passed and not item.approval_required]
+    unavailable = [
+        item for item in result.commands if not item.executed and not item.approval_required
+    ]
+    failed = [item for item in result.commands if item.executed and not item.passed]
     for item in approvals:
         result.potential_bugs.append(
             f"{item.name} requires ToolHub approval (request {item.request_id or 'unknown'})."
         )
     for item in failed:
         result.potential_bugs.append(f"{item.name} failed with exit code {item.exit_code}.")
+    for item in unavailable:
+        state = item.approval_status or "UNKNOWN"
+        result.potential_bugs.append(
+            f"{item.name} could not run because ToolHub request "
+            f"{item.request_id or 'unknown'} is {state}."
+        )
     if not result.commands:
         result.maintainability_issues.append("No supported test or lint commands were discovered.")
     result.deterministic_score = max(
@@ -58,6 +69,7 @@ def text_files(root: Path):
         "__pycache__",
         ".pytest_cache",
         ".ruff_cache",
+        ".repo-doctor",
     }
     for path in root.rglob("*"):
         if (

@@ -3,7 +3,7 @@
 [![CI](https://github.com/asxvgxkep/repo-doctor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/asxvgxkep/repo-doctor/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
 ![Release v0.2.0](https://img.shields.io/badge/release-v0.2.0-2563eb)
-![Tests: 73 passed, 1 skipped](https://img.shields.io/badge/tests-73%20passed%2C%201%20skipped-16a34a)
+![Tests: 102 passed, 3 skipped](https://img.shields.io/badge/tests-102%20passed%2C%203%20skipped-16a34a)
 
 **Repository diagnostics, optional LLM semantic analysis, and safely verified repair from one
 local-first CLI.**
@@ -49,6 +49,25 @@ The trusted administrator command remains:
 cd D:\mcp-toolhub
 uv run python -m toolhub.admin approve <request_id>
 ```
+
+When approvals are pending, Repo Doctor atomically stores a versioned orchestration session under
+its user-level state directory and prints its session ID; the target repository is never modified
+by session creation. The default location is `%LOCALAPPDATA%\repo-doctor\sessions` on Windows and
+`~/.local/state/repo-doctor/sessions` elsewhere. Set `REPO_DOCTOR_STATE_ROOT` to an absolute
+directory to override the state root. After an operator approves any subset of the requests
+out-of-band, resume from anywhere:
+
+```console
+repo-doctor resume <session-id>
+```
+
+Resume binds ToolHub to the canonical target path saved in the session and passes only each original
+request ID to `shell.run_approved`. Approved requests execute and become consumed; pending requests
+remain resumable, while rejected, expired, already-consumed, and unknown requests are reported as
+distinct non-execution states rather than test failures. Each completed operation is saved before
+the next request, so a later resume neither waits for every approval nor replays completed work.
+Session files contain report context and ToolHub-returned states, but no local approval flag or
+self-approval mechanism. ToolHub remains authoritative for approval and replay protection.
 
 MCP repair application is intentionally outside the v1 integration scope, so `fix` continues to use
 the existing local verification and rollback transaction.
@@ -276,6 +295,14 @@ ruff check .
 ruff format --check .
 python -m compileall -q repo_doctor tests
 repo-doctor scan tests\fixtures\python_project
+```
+
+The real ToolHub integration, including approval, resume, consumption, and replay protection, is
+opt-in and keeps its approval/audit state in the pytest temporary directory:
+
+```powershell
+$env:REPO_DOCTOR_RUN_TOOLHUB_INTEGRATION = "1"
+uv run --extra dev python -m pytest -m integration tests/test_tool_backends.py
 ```
 
 AI tests use fake providers and the semantic fixture under `tests/fixtures/semantic_bug`. The

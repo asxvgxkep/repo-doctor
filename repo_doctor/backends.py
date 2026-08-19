@@ -434,8 +434,7 @@ class MCPToolBackend:
             )
         except (KeyError, TypeError, ValueError) as error:
             raise FileReadError(
-                "ToolHub returned an invalid filesystem.read_file result "
-                f"for '{relative}'."
+                f"ToolHub returned an invalid filesystem.read_file result for '{relative}'."
             ) from error
 
     def run_command(
@@ -458,25 +457,21 @@ class MCPToolBackend:
                 "timeout_seconds": timeout,
             },
         )
-        try:
-            executed = bool(payload["executed"])
-            approval_status = payload.get("approval_status")
-            approval_required = not executed and approval_status == "PENDING"
-            return CommandResult(
-                name=name,
-                command=command,
-                exit_code=(int(payload["returncode"]) if executed else 126),
-                stdout=str(payload.get("stdout", "")),
-                stderr=str(payload.get("stderr", "")),
-                duration=time.monotonic() - started,
-                timed_out=bool(payload.get("timed_out", False)),
-                approval_required=approval_required,
-                request_id=payload.get("request_id"),
-                approval_status=approval_status,
-                message=str(payload.get("message", "")),
-            )
-        except (KeyError, TypeError, ValueError) as error:
-            raise ToolCallError("ToolHub returned an invalid shell.run result.") from error
+        return _shell_command_result(payload, name, command, started)
+
+    def run_approved(self, request_id: str, *, name: str = "Verification") -> CommandResult:
+        """Ask ToolHub to execute one already-approved, immutable shell request."""
+        if not request_id or "\x00" in request_id:
+            raise ToolCallError("ToolHub approval request ID must be non-empty.")
+        started = time.monotonic()
+        payload = self._call("shell.run_approved", {"request_id": request_id})
+        return _shell_command_result(
+            payload,
+            name,
+            (),
+            started,
+            fallback_request_id=request_id,
+        )
 
     def git_status(self) -> GitStatusResult:
         payload = self._call("git.status", {})
@@ -509,6 +504,63 @@ class MCPToolBackend:
             )
         except (KeyError, TypeError, ValueError) as error:
             raise ToolCallError("ToolHub returned an invalid git.diff result.") from error
+
+
+def _shell_command_result(
+    payload: dict[str, Any],
+    name: str,
+    fallback_command: tuple[str, ...],
+    started: float,
+    *,
+    fallback_request_id: str | None = None,
+) -> CommandResult:
+    """Validate and map a ToolHub shell response into Repo Doctor's model."""
+    try:
+        executed = payload["executed"]
+        if not isinstance(executed, bool):
+            raise TypeError("executed must be a boolean")
+        timed_out = payload.get("timed_out", False)
+        if not isinstance(timed_out, bool):
+            raise TypeError("timed_out must be a boolean")
+        program = payload.get("program", "")
+        arguments = payload.get("args", [])
+        if (
+            not isinstance(program, str)
+            or not isinstance(arguments, list)
+            or not all(isinstance(item, str) for item in arguments)
+        ):
+            raise TypeError("program and args must describe a command")
+        command = (program, *arguments) if program else fallback_command
+        if executed:
+            returncode = payload.get("returncode")
+            if returncode is None and timed_out:
+                exit_code = 124
+            else:
+                exit_code = int(returncode)
+        else:
+            exit_code = 126
+        approval_status = payload.get("approval_status")
+        if approval_status is not None and not isinstance(approval_status, str):
+            raise TypeError("approval_status must be text or null")
+        request_id = payload.get("request_id", fallback_request_id)
+        if request_id is not None and not isinstance(request_id, str):
+            raise TypeError("request_id must be text or null")
+        return CommandResult(
+            name=name,
+            command=command,
+            exit_code=exit_code,
+            stdout=str(payload.get("stdout", "")),
+            stderr=str(payload.get("stderr", "")),
+            duration=time.monotonic() - started,
+            timed_out=timed_out,
+            approval_required=not executed and approval_status == "PENDING",
+            request_id=request_id or fallback_request_id,
+            approval_status=approval_status,
+            message=str(payload.get("message", "")),
+            executed=executed,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ToolCallError("ToolHub returned an invalid shell result.") from error
 
 
 def create_tool_backend(kind: ToolBackendKind, root: Path) -> ToolBackend:

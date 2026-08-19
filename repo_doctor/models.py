@@ -25,10 +25,11 @@ class CommandResult:
     request_id: str | None = None
     approval_status: str | None = None
     message: str = ""
+    executed: bool = True
 
     @property
     def passed(self) -> bool:
-        return self.exit_code == 0 and not self.timed_out
+        return self.executed and self.exit_code == 0 and not self.timed_out
 
 
 @dataclass(frozen=True)

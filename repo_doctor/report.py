@@ -15,6 +15,9 @@ def _results(items: list[CommandResult], kind: str) -> str:
         if item.approval_required:
             status = "APPROVAL REQUIRED"
             approval = f"Request ID: {item.request_id or 'unknown'}\n{item.message}".strip()
+        elif not item.executed:
+            status = item.approval_status or "UNAVAILABLE"
+            approval = f"Request ID: {item.request_id or 'unknown'}\n{item.message}".strip()
         else:
             status = "PASS" if item.passed else "FAIL"
             approval = ""
@@ -23,7 +26,8 @@ def _results(items: list[CommandResult], kind: str) -> str:
         )
         output = redact_sensitive_text(combined_output.strip()[-4000:]) or "(no output)"
         heading = f"### {item.name}: {status}"
-        detail = f"`{' '.join(item.command)}` - {item.duration:.2f}s, exit {item.exit_code}"
+        outcome = f"exit {item.exit_code}" if item.executed else "not executed"
+        detail = f"`{' '.join(item.command)}` - {item.duration:.2f}s, {outcome}"
         blocks.append(f"{heading}\n\n{detail}\n\n```text\n{output}\n```")
     return "\n\n".join(blocks)
 

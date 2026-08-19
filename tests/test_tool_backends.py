@@ -1,6 +1,8 @@
 import hashlib
+import json
 import os
 import subprocess
+import threading
 from pathlib import Path
 
 import pytest
@@ -20,6 +22,7 @@ from repo_doctor.cli import app
 from repo_doctor.models import ScanResult
 from repo_doctor.report import render_report
 from repo_doctor.scanner import scan
+from repo_doctor.sessions import load_session_file
 
 
 class FakeMCPClient:
@@ -123,6 +126,24 @@ def shell_response(*, pending: bool = False) -> dict:
         "request_id": None,
         "approval_status": None,
         "message": "",
+    }
+
+
+def approved_shell_response(*, status: str = "CONSUMED", executed: bool = True) -> dict:
+    return {
+        "program": "pytest",
+        "args": [],
+        "cwd": ".",
+        "risk": "MEDIUM",
+        "risk_reason": "Running tests executes repository code.",
+        "executed": executed,
+        "returncode": 0 if executed else None,
+        "stdout": "1 passed\n" if executed else "",
+        "stderr": "",
+        "timed_out": False,
+        "request_id": "req_pending",
+        "approval_status": status,
+        "message": "" if executed else f"Request is {status}; cannot execute.",
     }
 
 
@@ -239,6 +260,22 @@ def test_pending_approval_is_structured_and_visible_in_report(tmp_path: Path) ->
     assert "req_pending" in report
 
 
+def test_mcp_run_approved_calls_only_request_id_and_maps_real_result(tmp_path: Path) -> None:
+    client = FakeMCPClient({"shell.run_approved": approved_shell_response()})
+    backend, _ = make_backend(tmp_path, client)
+
+    with backend:
+        result = backend.run_approved("req_pending", name="Python tests")
+
+    assert client.calls == [("shell.run_approved", {"request_id": "req_pending"})]
+    assert result.passed
+    assert result.executed
+    assert result.command == ("pytest",)
+    assert result.request_id == "req_pending"
+    assert result.approval_status == "CONSUMED"
+    assert result.stdout == "1 passed\n"
+
+
 def test_mcp_scan_routes_reads_and_discovered_commands_through_backend(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[tool.ruff]\n", encoding="utf-8")
     (tmp_path / "README.md").write_text("# Fixture\n", encoding="utf-8")
@@ -286,9 +323,7 @@ def test_local_and_mcp_scans_share_text_and_binary_eligibility(tmp_path: Path) -
     mcp_result = scan(tmp_path, backend=mcp_backend)
 
     mcp_read_paths = [
-        arguments["path"]
-        for name, arguments in client.calls
-        if name == "filesystem.read_file"
+        arguments["path"] for name, arguments in client.calls if name == "filesystem.read_file"
     ]
     assert local_backend.read_paths == ["README.md"]
     assert mcp_read_paths == ["README.md"]
@@ -421,3 +456,74 @@ def test_real_toolhub_read_and_git_round_trip(tmp_path: Path, monkeypatch) -> No
     assert read.content == "before\nafter\n"
     assert any(entry.path == "app.py" for entry in status.entries)
     assert "+after" in diff.raw
+
+
+@pytest.mark.integration
+def test_real_toolhub_approval_resume_and_replay_protection(tmp_path: Path, monkeypatch) -> None:
+    if os.environ.get("REPO_DOCTOR_RUN_TOOLHUB_INTEGRATION") != "1":
+        pytest.skip("set REPO_DOCTOR_RUN_TOOLHUB_INTEGRATION=1 to run real ToolHub integration")
+    toolhub = Path(r"D:\mcp-toolhub")
+    mcp_executable = toolhub / ".venv" / "Scripts" / "mcp.exe"
+    admin_python = toolhub / ".venv" / "Scripts" / "python.exe"
+    if not (toolhub / "server.py").is_file() or not all(
+        path.is_file() for path in (mcp_executable, admin_python)
+    ):
+        pytest.skip(r"real ToolHub is unavailable at D:\mcp-toolhub")
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    (repository / "requirements.txt").write_text("", encoding="utf-8")
+    tests = repository / "tests"
+    tests.mkdir()
+    (tests / "test_smoke.py").write_text(
+        "def test_real_resume():\n    assert 2 + 2 == 4\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+
+    state = tmp_path / "toolhub-state"
+    approval_store = state / "approvals.json"
+    monkeypatch.setenv("TOOLHUB_APPROVAL_STORE", str(approval_store))
+    monkeypatch.setenv("TOOLHUB_AUDIT_PATH", str(state / "audit.jsonl"))
+    monkeypatch.setenv("REPO_DOCTOR_STATE_ROOT", str(state / "repo-doctor-state"))
+
+    monkeypatch.chdir(repository)
+    runner = CliRunner()
+    scan_response = runner.invoke(app, ["scan", ".", "--tool-backend", "mcp"])
+    assert scan_response.exit_code == 0, scan_response.output
+    assert "Approval required" in scan_response.output
+    session_files = list((state / "repo-doctor-state" / "sessions").glob("*.json"))
+    assert len(session_files) == 1
+    assert not (repository / ".repo-doctor").exists()
+    session = load_session_file(session_files[0])
+    request_id = session.operations[0].request_id
+
+    subprocess.run(
+        [str(admin_python), "-m", "toolhub.admin", "approve", request_id],
+        cwd=toolhub,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    resume_response = runner.invoke(app, ["resume", session.session_id])
+    assert resume_response.exit_code == 0, resume_response.output
+    assert "Python tests: PASS" in resume_response.output
+    assert "1 passed" in resume_response.output
+    assert "All pending verification completed" in resume_response.output
+    store = json.loads(approval_store.read_text(encoding="utf-8"))
+    assert store["requests"][request_id]["status"] == "CONSUMED"
+
+    repeated = runner.invoke(app, ["resume", session.session_id])
+    assert repeated.exit_code == 0, repeated.output
+    audit_events = [
+        json.loads(line)
+        for line in (state / "audit.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    executions = [
+        event
+        for event in audit_events
+        if event.get("tool") == "shell.run_approved" and event.get("action") == "execute_approved"
+    ]
+    assert len(executions) == 1
+    assert not any(thread.name == "repo-doctor-mcp" for thread in threading.enumerate())

@@ -28,6 +28,7 @@ COPY_EXCLUDES = (
     "__pycache__",
     ".pytest_cache",
     ".ruff_cache",
+    ".repo-doctor",
 )
 
 
