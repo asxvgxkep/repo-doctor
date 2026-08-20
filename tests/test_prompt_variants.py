@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from repo_doctor.ai.models import (
     AnalysisRequest,
+    BehavioralContract,
     FileContext,
     PatchRequest,
     SemanticFinding,
@@ -54,7 +55,16 @@ def patch_request() -> PatchRequest:
         evidence="A failing test exercises the boundary.",
         suggested_fix="Preserve the expected boundary behavior.",
     )
-    return PatchRequest(finding, context)
+    return PatchRequest(
+        finding,
+        context,
+        BehavioralContract(
+            must_fix=("Honor the boundary.",),
+            must_preserve=("Preserve existing valid input behavior.",),
+            evidence=("A boundary test fails.",),
+            rationale="The patch must fix the boundary without regression.",
+        ),
+    )
 
 
 def test_baseline_v1_preserves_existing_default_prompt_behavior() -> None:
@@ -74,7 +84,7 @@ def test_candidate_v2_is_selectable_for_analysis_and_patch_messages() -> None:
     analysis = analysis_messages(analysis_request(), "candidate-v2")
     patch = patch_messages(patch_request(), "candidate-v2")
 
-    assert tuple(PROMPT_VARIANTS) == ("baseline-v1", "candidate-v2")
+    assert tuple(PROMPT_VARIANTS) == ("baseline-v1", "candidate-v2", "candidate-v3")
     assert analysis[0]["content"] != ANALYSIS_SYSTEM_PROMPT
     assert patch[0]["content"] != PATCH_SYSTEM_PROMPT
     assert "complete behavior implied by failing tests" in analysis[0]["content"]
@@ -83,6 +93,48 @@ def test_candidate_v2_is_selectable_for_analysis_and_patch_messages() -> None:
     combined = analysis[0]["content"] + patch[0]["content"]
     assert "settings_parser_001" not in combined
     assert "AgentLab" not in combined
+
+
+def test_candidate_v3_focuses_on_contract_carrying_without_specific_checklists() -> None:
+    request = analysis_request()
+    request = AnalysisRequest(
+        request.repository_name,
+        request.technologies,
+        request.file_count,
+        request.line_count,
+        request.verifications,
+        request.deterministic_findings,
+        request.files,
+        "Honor the complete requested behavior.",
+    )
+    analysis = analysis_messages(request, "candidate-v3")
+    patch = patch_messages(patch_request(), "candidate-v3")
+    analysis_payload = json.loads(analysis[1]["content"])
+    patch_payload = json.loads(patch[1]["content"])
+
+    assert analysis_payload["task"] == "Honor the complete requested behavior."
+    assert "behavioral_contract" in analysis[0]["content"]
+    assert "behavior already passing" in analysis[0]["content"]
+    assert "related failures" in analysis[0]["content"]
+    assert "must_fix and must_preserve acceptance items" in patch[0]["content"]
+    assert patch_payload["behavioral_contract"]["must_preserve"] == [
+        "Preserve existing valid input behavior."
+    ]
+    combined = analysis[0]["content"] + patch[0]["content"]
+    for forbidden in (
+        "settings_parser_001",
+        "AgentLab",
+        "benchmark fixture",
+        "blank input",
+        "meaningful empty values",
+    ):
+        assert forbidden not in combined
+
+
+def test_baseline_request_omits_task_when_not_provided() -> None:
+    payload = json.loads(analysis_messages(analysis_request())[1]["content"])
+
+    assert "task" not in payload
 
 
 @pytest.mark.parametrize("builder", [analysis_messages, patch_messages])
@@ -143,6 +195,7 @@ def test_provider_from_env_rejects_unknown_variant_before_configuration(monkeypa
     [
         ([], "baseline-v1"),
         (["--prompt-variant", "candidate-v2"], "candidate-v2"),
+        (["--prompt-variant", "candidate-v3"], "candidate-v3"),
     ],
 )
 def test_fix_cli_selects_default_or_explicit_prompt_variant(
@@ -152,21 +205,26 @@ def test_fix_cli_selects_default_or_explicit_prompt_variant(
     expected_variant: str,
 ) -> None:
     provider_variants: list[str] = []
+    execute_kwargs: list[dict] = []
 
     def fake_provider_from_env(*, prompt_variant: str):
         provider_variants.append(prompt_variant)
         return object()
 
     monkeypatch.setattr("repo_doctor.cli.provider_from_env", fake_provider_from_env)
-    monkeypatch.setattr(
-        "repo_doctor.cli.execute_ai_fix",
-        lambda *_args, **_kwargs: SimpleNamespace(status="no_candidate"),
-    )
+    def fake_execute(*_args, **kwargs):
+        execute_kwargs.append(kwargs)
+        return SimpleNamespace(status="no_candidate")
+
+    monkeypatch.setattr("repo_doctor.cli.execute_ai_fix", fake_execute)
 
     response = CliRunner().invoke(app, ["fix", str(tmp_path), "--ai", *arguments])
 
     assert response.exit_code == 0, response.output
     assert provider_variants == [expected_variant]
+    assert execute_kwargs[0]["task"] is None
+    assert execute_kwargs[0]["prompt_variant"] == expected_variant
+    assert execute_kwargs[0]["report_path"] is None
 
 
 def test_fix_cli_rejects_unknown_variant_without_calling_llm(tmp_path, monkeypatch) -> None:
@@ -183,3 +241,88 @@ def test_fix_cli_rejects_unknown_variant_without_calling_llm(tmp_path, monkeypat
 
     assert response.exit_code == 2
     assert "Unknown prompt variant 'unknown-v9'" in response.output
+
+
+def test_fix_cli_reads_task_file_and_plumbs_report_path(tmp_path, monkeypatch) -> None:
+    task_file = tmp_path / "task.txt"
+    report_path = tmp_path / "report.json"
+    task_file.write_text("Preserve all passing behavior.", encoding="utf-8")
+    observed = {}
+
+    monkeypatch.setattr("repo_doctor.cli.provider_from_env", lambda **_kwargs: object())
+
+    def fake_execute(*_args, **kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(status="no_candidate")
+
+    monkeypatch.setattr("repo_doctor.cli.execute_ai_fix", fake_execute)
+
+    response = CliRunner().invoke(
+        app,
+        [
+            "fix",
+            str(tmp_path),
+            "--ai",
+            "--task-file",
+            str(task_file),
+            "--report-json",
+            str(report_path),
+        ],
+    )
+
+    assert response.exit_code == 0, response.output
+    assert observed["task"] == "Preserve all passing behavior."
+    assert observed["report_path"] == report_path
+
+
+def test_fix_cli_plumbs_inline_task_to_local_ai_path(tmp_path, monkeypatch) -> None:
+    observed = {}
+    monkeypatch.setattr("repo_doctor.cli.provider_from_env", lambda **_kwargs: object())
+
+    def fake_execute(*_args, **kwargs):
+        observed.update(kwargs)
+        return SimpleNamespace(status="no_candidate")
+
+    monkeypatch.setattr("repo_doctor.cli.execute_ai_fix", fake_execute)
+
+    response = CliRunner().invoke(
+        app,
+        ["fix", str(tmp_path), "--ai", "--task", "Preserve public behavior."],
+    )
+
+    assert response.exit_code == 0, response.output
+    assert observed["task"] == "Preserve public behavior."
+
+
+def test_fix_cli_rejects_task_and_task_file_together(tmp_path, monkeypatch) -> None:
+    task_file = tmp_path / "task.txt"
+    task_file.write_text("task", encoding="utf-8")
+    monkeypatch.setattr(
+        "repo_doctor.cli.provider_from_env",
+        lambda **_kwargs: pytest.fail("provider must not be configured"),
+    )
+
+    response = CliRunner().invoke(
+        app,
+        ["fix", str(tmp_path), "--ai", "--task", "one", "--task-file", str(task_file)],
+    )
+
+    assert response.exit_code == 2
+    assert "either --task or --task-file" in response.output
+
+
+def test_fix_cli_rejects_oversized_task_file_before_provider(tmp_path, monkeypatch) -> None:
+    task_file = tmp_path / "task.txt"
+    task_file.write_text("x" * 64_001, encoding="utf-8")
+    monkeypatch.setattr(
+        "repo_doctor.cli.provider_from_env",
+        lambda **_kwargs: pytest.fail("provider must not be configured"),
+    )
+
+    response = CliRunner().invoke(
+        app,
+        ["fix", str(tmp_path), "--ai", "--task-file", str(task_file)],
+    )
+
+    assert response.exit_code == 2
+    assert "64000-byte safety limit" in response.output

@@ -36,6 +36,7 @@ from .sessions import (
 
 app = typer.Typer(help="Safely diagnose and repair a local repository.", no_args_is_help=True)
 console = Console()
+MAX_TASK_FILE_BYTES = 64_000
 
 
 @app.command("scan")
@@ -170,6 +171,23 @@ def _print_repair_approval_instructions(session: RepairSession) -> None:
     console.print(f"  repo-doctor resume {session.session_id}", markup=False)
 
 
+def _repair_task(task: str | None, task_file: Path | None) -> str | None:
+    if task is not None and task_file is not None:
+        raise ValueError("Use either --task or --task-file, not both.")
+    if task_file is None:
+        return task
+    try:
+        payload = task_file.read_bytes()
+    except OSError as error:
+        raise ValueError(f"Could not read task file: {task_file}.") from error
+    if len(payload) > MAX_TASK_FILE_BYTES:
+        raise ValueError(f"Task file exceeds the {MAX_TASK_FILE_BYTES}-byte safety limit.")
+    try:
+        return payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("Task file must contain UTF-8 text.") from error
+
+
 @app.command()
 def fix(
     repository_path: Path,
@@ -189,15 +207,38 @@ def fix(
         ToolBackendKind,
         typer.Option("--tool-backend", help="Tool execution backend: local or mcp."),
     ] = ToolBackendKind.LOCAL,
+    task: Annotated[
+        str | None,
+        typer.Option("--task", help="Optional user repair task supplied to semantic analysis."),
+    ] = None,
+    task_file: Annotated[
+        Path | None,
+        typer.Option("--task-file", help="Read the optional repair task from a UTF-8 file."),
+    ] = None,
+    report_json: Annotated[
+        Path | None,
+        typer.Option(
+            "--report-json",
+            help="Write a structured, secret-safe local AI repair report.",
+        ),
+    ] = None,
 ) -> None:
     """Apply one safe fix to a clean Git repository, then verify it."""
     root = repository_path.resolve()
     try:
         prompt_profile(prompt_variant)
+        repair_task = _repair_task(task, task_file)
         if dry_run and not ai:
             raise ValueError("--dry-run is available only with --ai.")
+        if not ai and (repair_task is not None or report_json is not None):
+            raise ValueError("--task, --task-file, and --report-json are available only with --ai.")
         if tool_backend is ToolBackendKind.MCP and not ai:
             raise ValueError("--tool-backend mcp currently requires --ai in fix mode.")
+        if tool_backend is ToolBackendKind.MCP and report_json is not None:
+            raise ValueError(
+                "--report-json is available only with --tool-backend local; "
+                "MCP repairs persist resumable repair sessions instead."
+            )
         if ai:
             if tool_backend is ToolBackendKind.MCP:
                 outcome = execute_mcp_ai_fix(
@@ -205,6 +246,7 @@ def fix(
                     provider_from_env(prompt_variant=prompt_variant),
                     timeout=timeout,
                     dry_run=dry_run,
+                    task=repair_task,
                 )
                 if outcome.status == "no_candidate":
                     console.print("[yellow]No high-confidence AI fix is available.[/yellow]")
@@ -228,6 +270,9 @@ def fix(
                 provider_from_env(prompt_variant=prompt_variant),
                 timeout=timeout,
                 dry_run=dry_run,
+                task=repair_task,
+                prompt_variant=prompt_variant,
+                report_path=report_json,
             )
             if outcome.status == "no_candidate":
                 console.print("[yellow]No high-confidence AI fix is available.[/yellow]")

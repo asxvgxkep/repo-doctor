@@ -43,6 +43,7 @@ def execute_mcp_ai_fix(
     timeout: int = 120,
     dry_run: bool = False,
     backend_factory: Callable[[Path], MCPToolBackend] = MCPToolBackend,
+    task: str | None = None,
 ) -> MCPFixOutcome:
     """Diagnose one repair, then submit its exact patch to ToolHub.
 
@@ -61,7 +62,10 @@ def execute_mcp_ai_fix(
             "AI fix requires at least one discovered test or lint command for verification."
         )
 
-    response, contexts = analyze_repository(baseline, provider)
+    response, contexts = analyze_repository(baseline, provider, task=task)
+    contract = response.behavioral_contract
+    if contract is None:  # Defensive: analyze_repository always completes the contract.
+        raise VerificationError("AI analysis did not produce a behavioral contract.")
     finding = select_fix_candidate(response.findings)
     if finding is None:
         return MCPFixOutcome("no_candidate")
@@ -79,7 +83,7 @@ def execute_mcp_ai_fix(
             redact_sensitive_text(target.content),
             target.sha256,
         )
-        request = PatchRequest(finding, patch_context)
+        request = PatchRequest(finding, patch_context, contract)
         proposal = provider.generate_patch(request)
         if proposal.file != finding.file:
             raise PatchValidationError("AI patch file does not match the selected finding.")
