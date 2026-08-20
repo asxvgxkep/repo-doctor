@@ -85,6 +85,4 @@ class OpenAICompatibleProvider:
         )
 
     def generate_patch(self, request: PatchRequest) -> PatchProposal:
-        return parse_patch_response(
-            self._complete(patch_messages(request, self.prompt_variant))
-        )
+        return parse_patch_response(self._complete(patch_messages(request, self.prompt_variant)))

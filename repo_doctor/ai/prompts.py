@@ -27,19 +27,25 @@ The file must match the supplied file. old_text must be copied exactly and ident
 small region. Do not return shell commands, unified diffs, multiple files, or prose.
 """
 
-CANDIDATE_ANALYSIS_SYSTEM_PROMPT = ANALYSIS_SYSTEM_PROMPT + """Before finalizing findings,
+CANDIDATE_ANALYSIS_SYSTEM_PROMPT = (
+    ANALYSIS_SYSTEM_PROMPT
+    + """Before finalizing findings,
 infer the complete behavior implied by failing tests and surrounding code, not only the first
 visible symptom. For parsers and string transformations, check blank input and blank lines,
 key and value whitespace separately, meaningful empty values, boundary conditions, and whether
 normalization would discard user data. Prefer minimal fixes that preserve compatible behavior.
 """
+)
 
-CANDIDATE_PATCH_SYSTEM_PROMPT = PATCH_SYSTEM_PROMPT + """Before proposing the edit, check it
+CANDIDATE_PATCH_SYSTEM_PROMPT = (
+    PATCH_SYSTEM_PROMPT
+    + """Before proposing the edit, check it
 against the complete test-derived behavior and relevant boundary cases. For parsers and string
 transformations, treat key and value whitespace separately, preserve meaningful empty values,
 and avoid unnecessary normalization. Keep the patch minimal and compatible with existing
 behavior. Do not modify tests or verification configuration merely to make verification pass.
 """
+)
 
 DEFAULT_PROMPT_VARIANT = "baseline-v1"
 

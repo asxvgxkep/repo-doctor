@@ -211,9 +211,7 @@ def test_resume_pending_remains_pending(tmp_path: Path, state_root_dir: Path) ->
     assert "APPROVAL REQUIRED" in render_report(session.result)
 
 
-def test_resume_unknown_request_is_reported_clearly(
-    tmp_path: Path, state_root_dir: Path
-) -> None:
+def test_resume_unknown_request_is_reported_clearly(tmp_path: Path, state_root_dir: Path) -> None:
     session = pending_session(tmp_path)
     calls = []
     unknown = CommandResult(
@@ -349,9 +347,7 @@ def test_resume_uses_only_stored_target_path(
     assert response.exit_code != 0
 
 
-def test_session_file_outside_state_root_is_rejected(
-    tmp_path: Path, state_root_dir: Path
-) -> None:
+def test_session_file_outside_state_root_is_rejected(tmp_path: Path, state_root_dir: Path) -> None:
     target = tmp_path / "target"
     target.mkdir()
     session = pending_session(target)

@@ -97,12 +97,8 @@ class SharedBackendState:
             approval_status="CONSUMED",
         )
         self.submissions = {
-            "Python tests": pending_command(
-                "Python tests", ("pytest",), "req_tests"
-            ),
-            "Python lint": pending_command(
-                "Python lint", ("ruff", "check", "."), "req_lint"
-            ),
+            "Python tests": pending_command("Python tests", ("pytest",), "req_tests"),
+            "Python lint": pending_command("Python lint", ("ruff", "check", "."), "req_lint"),
         }
         self.approved_commands = {}
         self.diff = GitDiffResult(
@@ -234,8 +230,7 @@ def state_root(tmp_path: Path, monkeypatch) -> Path:
 
 def repair_repository(root: Path) -> bytes:
     (root / "pyproject.toml").write_text(
-        "[project]\nname='fixture'\nversion='1.0'\n"
-        "[tool.pytest.ini_options]\npythonpath=['.']\n",
+        "[project]\nname='fixture'\nversion='1.0'\n[tool.pytest.ini_options]\npythonpath=['.']\n",
         encoding="utf-8",
     )
     target = root / "inventory.py"
@@ -246,8 +241,7 @@ def repair_repository(root: Path) -> bytes:
     tests = root / "tests"
     tests.mkdir()
     (tests / "test_inventory.py").write_text(
-        "from inventory import can_fulfill\n\n\n"
-        "def test_exact():\n    assert can_fulfill(2, 2)\n",
+        "from inventory import can_fulfill\n\n\ndef test_exact():\n    assert can_fulfill(2, 2)\n",
         encoding="utf-8",
     )
     return target.read_bytes()
@@ -517,9 +511,7 @@ def test_patch_and_verification_share_session_and_make_partial_progress(
 
     state.approved_commands = {
         "req_tests": approved_command("Python tests", ("pytest",), "req_tests"),
-        "req_lint": pending_command(
-            "Python lint", ("ruff", "check", "."), "req_lint"
-        ),
+        "req_lint": pending_command("Python lint", ("ruff", "check", "."), "req_lint"),
     }
     resume_repair_session(session, backend_factory=backend_factory(state))
     assert session.phase is RepairPhase.VERIFICATION_PENDING
@@ -570,12 +562,8 @@ def test_verification_refusal_is_distinct_from_test_failure(
     state = SharedBackendState()
     resume_repair_session(session, backend_factory=backend_factory(state))
     state.approved_commands = {
-        "req_tests": refused_command(
-            "Python tests", ("pytest",), "req_tests", toolhub_status
-        ),
-        "req_lint": approved_command(
-            "Python lint", ("ruff", "check", "."), "req_lint"
-        ),
+        "req_tests": refused_command("Python tests", ("pytest",), "req_tests", toolhub_status),
+        "req_lint": approved_command("Python lint", ("ruff", "check", "."), "req_lint"),
     }
 
     resume_repair_session(session, backend_factory=backend_factory(state))
@@ -594,12 +582,8 @@ def test_approved_without_execution_becomes_unknown_without_local_authorization(
     state = SharedBackendState()
     resume_repair_session(session, backend_factory=backend_factory(state))
     state.approved_commands = {
-        "req_tests": refused_command(
-            "Python tests", ("pytest",), "req_tests", "APPROVED"
-        ),
-        "req_lint": approved_command(
-            "Python lint", ("ruff", "check", "."), "req_lint"
-        ),
+        "req_tests": refused_command("Python tests", ("pytest",), "req_tests", "APPROVED"),
+        "req_lint": approved_command("Python lint", ("ruff", "check", "."), "req_lint"),
     }
 
     resume_repair_session(session, backend_factory=backend_factory(state))
@@ -712,12 +696,8 @@ def test_actual_verification_failure_is_not_approval_failure(
     session = pending_repair(tmp_path)
     state = SharedBackendState()
     state.submissions = {
-        "Python tests": approved_command(
-            "Python tests", ("pytest",), "req_low_tests", exit_code=1
-        ),
-        "Python lint": approved_command(
-            "Python lint", ("ruff", "check", "."), "req_low_lint"
-        ),
+        "Python tests": approved_command("Python tests", ("pytest",), "req_low_tests", exit_code=1),
+        "Python lint": approved_command("Python lint", ("ruff", "check", "."), "req_low_lint"),
     }
 
     resume_repair_session(session, backend_factory=backend_factory(state))
@@ -731,9 +711,7 @@ def test_actual_verification_failure_is_not_approval_failure(
     assert session.diff_summary is not None
 
 
-def test_repair_session_rejects_substituted_patch_target(
-    tmp_path: Path, state_root: Path
-) -> None:
+def test_repair_session_rejects_substituted_patch_target(tmp_path: Path, state_root: Path) -> None:
     session = pending_repair(tmp_path)
     path = session_file_path(session.session_id)
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -863,12 +841,9 @@ def test_real_toolhub_ai_repair_approval_verification_diff_and_audit(
     shell_executions = [
         event
         for event in audit_events
-        if event.get("tool") == "shell.run_approved"
-        and event.get("action") == "execute_approved"
+        if event.get("tool") == "shell.run_approved" and event.get("action") == "execute_approved"
     ]
-    assert {event.get("request_id") for event in shell_executions} == set(
-        verification_requests
-    )
+    assert {event.get("request_id") for event in shell_executions} == set(verification_requests)
 
     resume_repair_session(
         session,

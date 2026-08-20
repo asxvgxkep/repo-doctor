@@ -586,8 +586,7 @@ def _session_to_data(session: RepairSession) -> dict[str, Any]:
         "patch_trace_id": session.patch_trace_id,
         "patch_new_hash": session.patch_new_hash,
         "verification_plan": [
-            {"name": item.name, "command": list(item.command)}
-            for item in session.verification_plan
+            {"name": item.name, "command": list(item.command)} for item in session.verification_plan
         ],
         "operations": [_operation_to_data(item) for item in session.operations],
         "diff_summary": _diff_to_data(session.diff_summary),
@@ -749,9 +748,7 @@ def _operation_from_data(value: object, index: int) -> RepairOperation:
         raise SessionError(f"{label} kind or status is invalid.") from error
     verification_index = data["verification_index"]
     if verification_index is not None:
-        verification_index = _nonnegative_integer(
-            verification_index, f"{label}.verification_index"
-        )
+        verification_index = _nonnegative_integer(verification_index, f"{label}.verification_index")
     exit_code = data["exit_code"]
     if exit_code is not None:
         exit_code = _integer(exit_code, f"{label}.exit_code")
@@ -832,10 +829,15 @@ def _validate_repair_session(session: RepairSession) -> None:
                 raise SessionError("Verification operation does not match its stored plan.")
         if operation.status is RepairOperationStatus.PENDING and operation.request_id is None:
             raise SessionError("Pending repair operation must have a ToolHub request ID.")
-        if operation.status in {
-            RepairOperationStatus.COMPLETED,
-            RepairOperationStatus.FAILED,
-        } and operation.kind is RepairOperationKind.VERIFICATION and operation.exit_code is None:
+        if (
+            operation.status
+            in {
+                RepairOperationStatus.COMPLETED,
+                RepairOperationStatus.FAILED,
+            }
+            and operation.kind is RepairOperationKind.VERIFICATION
+            and operation.exit_code is None
+        ):
             raise SessionError("Executed verification must retain its exit code.")
     if patch_count > 1:
         raise SessionError("Repair session may contain only one patch operation.")
@@ -882,9 +884,7 @@ def _validate_repair_session(session: RepairSession) -> None:
         session.phase in verification_terminal
         and _derive_verification_phase(session) is not session.phase
     ):
-        raise SessionError(
-            f"{session.phase.value.upper()} does not match verification results."
-        )
+        raise SessionError(f"{session.phase.value.upper()} does not match verification results.")
 
 
 def _canonical_existing_directory(path: Path) -> Path:
