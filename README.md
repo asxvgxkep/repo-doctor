@@ -187,12 +187,15 @@ flowchart TD
     Verifier1 --> Selector["Bounded context selector"]
     Selector --> Provider["OpenAI-compatible LLM provider"]
     Provider --> Findings["Strict structured findings"]
-    Findings --> Generator["Constrained patch generator"]
+    Findings --> Contract["Behavioral contract"]
+    Contract --> Generator["Constrained patch generator"]
     Generator --> Applier["Safe single-file patch applier"]
     Applier --> Verifier2["Tests and linters"]
     Verifier2 --> Decision{"Verification passes?"}
     Decision -->|Yes| Keep["Keep change"]
     Decision -->|No| Rollback["Restore exact bytes"]
+    Rollback --> Report["Repair report + evidence"]
+    Keep --> Report
 ```
 
 The deterministic pipeline is always run first:
