@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/asxvgxkep/repo-doctor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/asxvgxkep/repo-doctor/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
-![Release v0.2.0](https://img.shields.io/badge/release-v0.2.0-2563eb)
-![Tests: 102 passed, 3 skipped](https://img.shields.io/badge/tests-102%20passed%2C%203%20skipped-16a34a)
+![Release v0.3.0](https://img.shields.io/badge/release-v0.3.0-2563eb)
+![Tests: 153 passed, 4 skipped](https://img.shields.io/badge/tests-153%20passed%2C%204%20skipped-16a34a)
 
 **Repository diagnostics, optional LLM semantic analysis, and safely verified repair from one
 local-first CLI.**
