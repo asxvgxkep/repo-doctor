@@ -212,6 +212,7 @@ def test_fix_cli_selects_default_or_explicit_prompt_variant(
         return object()
 
     monkeypatch.setattr("repo_doctor.cli.provider_from_env", fake_provider_from_env)
+
     def fake_execute(*_args, **kwargs):
         execute_kwargs.append(kwargs)
         return SimpleNamespace(status="no_candidate")

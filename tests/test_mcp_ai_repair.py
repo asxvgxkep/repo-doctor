@@ -769,9 +769,7 @@ def test_local_ai_fix_remains_the_default_cli_path(tmp_path: Path, monkeypatch) 
     assert ToolBackendKind.LOCAL.value not in response.output
 
 
-def test_mcp_fix_cli_passes_task_but_rejects_local_report_json(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_mcp_fix_cli_passes_task_but_rejects_local_report_json(tmp_path: Path, monkeypatch) -> None:
     observed = {}
     monkeypatch.setattr("repo_doctor.cli.provider_from_env", lambda **kwargs: object())
 

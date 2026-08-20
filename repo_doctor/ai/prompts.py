@@ -60,11 +60,14 @@ the patch must preserve. Return an empty findings array when no concrete issue e
 still returning the evidence-derived behavioral contract.
 """
 
-CANDIDATE_V3_PATCH_SYSTEM_PROMPT = PATCH_SYSTEM_PROMPT + """The behavioral contract is the
+CANDIDATE_V3_PATCH_SYSTEM_PROMPT = (
+    PATCH_SYSTEM_PROMPT
+    + """The behavioral contract is the
 acceptance standard for the repair, not optional context. Before returning a patch, check all
 must_fix and must_preserve acceptance items. When related failures require one coherent edit,
 address them together instead of patching only the selected finding's local symptom.
 """
+)
 
 DEFAULT_PROMPT_VARIANT = "baseline-v1"
 

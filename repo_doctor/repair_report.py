@@ -29,9 +29,7 @@ class RepairReport:
     behavioral_contract: dict[str, Any] | None = None
     patch: dict[str, Any] | None = None
     patch_applied: bool = False
-    verification: dict[str, Any] = field(
-        default_factory=lambda: {"summary": None, "commands": []}
-    )
+    verification: dict[str, Any] = field(default_factory=lambda: {"summary": None, "commands": []})
     rollback_attempted: bool = False
     rollback_succeeded: bool | None = None
     final_status: str = "started"
