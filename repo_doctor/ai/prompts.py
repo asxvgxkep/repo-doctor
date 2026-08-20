@@ -47,6 +47,25 @@ behavior. Do not modify tests or verification configuration merely to make verif
 """
 )
 
+CANDIDATE_V3_ANALYSIS_SYSTEM_PROMPT = """You are a conservative semantic code reviewer.
+Use all supplied evidence, files, and the user task when present. Report only concrete issues
+grounded in that input. Build one complete behavioral contract for the repair from the failing
+evidence, relevant passing behavior, user task, and all findings. If related failures must be
+resolved by one patch, keep them together as one acceptance contract instead of splitting them
+into local symptoms that lose context.
+Return JSON only with exactly this schema:
+{"findings":[{"id":"...","title":"...","category":"...","severity":"low|medium|high|critical","confidence":0.0,"file":"relative/path","line_start":1,"line_end":1,"explanation":"...","evidence":"...","suggested_fix":"..."}],"behavioral_contract":{"must_fix":["..."],"must_preserve":["..."],"evidence":["..."],"rationale":"..."}}
+Use forward slashes in relative paths. The contract must record behavior already passing that
+the patch must preserve. Return an empty findings array when no concrete issue exists, while
+still returning the evidence-derived behavioral contract.
+"""
+
+CANDIDATE_V3_PATCH_SYSTEM_PROMPT = PATCH_SYSTEM_PROMPT + """The behavioral contract is the
+acceptance standard for the repair, not optional context. Before returning a patch, check all
+must_fix and must_preserve acceptance items. When related failures require one coherent edit,
+address them together instead of patching only the selected finding's local symptom.
+"""
+
 DEFAULT_PROMPT_VARIANT = "baseline-v1"
 
 
@@ -67,6 +86,10 @@ PROMPT_VARIANTS: Mapping[str, PromptProfile] = MappingProxyType(
         "candidate-v2": PromptProfile(
             analysis_system_prompt=CANDIDATE_ANALYSIS_SYSTEM_PROMPT,
             patch_system_prompt=CANDIDATE_PATCH_SYSTEM_PROMPT,
+        ),
+        "candidate-v3": PromptProfile(
+            analysis_system_prompt=CANDIDATE_V3_ANALYSIS_SYSTEM_PROMPT,
+            patch_system_prompt=CANDIDATE_V3_PATCH_SYSTEM_PROMPT,
         ),
     }
 )
@@ -100,6 +123,8 @@ def analysis_messages(
         "deterministic_findings": request.deterministic_findings,
         "selected_files": [{"path": item.path, "content": item.content} for item in request.files],
     }
+    if request.task is not None:
+        payload["task"] = request.task
     return [
         {"role": "system", "content": profile.analysis_system_prompt},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -110,12 +135,13 @@ def patch_messages(
     request: PatchRequest,
     prompt_variant: str = DEFAULT_PROMPT_VARIANT,
 ) -> list[dict[str, str]]:
-    """Build a patch request containing only one finding and one source file."""
+    """Build a patch request carrying its selected finding and full repair contract."""
     profile = prompt_profile(prompt_variant)
     finding = asdict(request.finding)
     finding["severity"] = request.finding.severity.value
     payload = {
         "finding": finding,
+        "behavioral_contract": asdict(request.behavioral_contract),
         "source_file": {"path": request.file.path, "content": request.file.content},
     }
     return [

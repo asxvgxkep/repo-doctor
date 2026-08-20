@@ -7,6 +7,7 @@ import re
 
 PRIVATE_PROVIDER_VARIABLES = {"REPO_DOCTOR_API_KEY"}
 MIN_GLOBAL_SECRET_LENGTH = 8
+MAX_SENSITIVE_TEXT = 8_000
 SENSITIVE_NAME = re.compile(r"(?i)(api[_-]?key|token|password|passwd|secret|authorization)")
 ASSIGNMENT = re.compile(
     r"(?im)^(\s*(?:[a-z0-9_-]*(?:api[_-]?key|token|password|passwd|secret)|authorization)\s*[:=]\s*)([^\r\n]+)(\r?)$"
@@ -33,3 +34,12 @@ def redact_sensitive_text(value: str) -> str:
             redacted = secret_pattern.sub("[REDACTED]", redacted)
     redacted = ASSIGNMENT.sub(r"\1[REDACTED]\3", redacted)
     return BEARER.sub(r"\1[REDACTED]", redacted)
+
+
+def bounded_sensitive_text(value: object, limit: int = MAX_SENSITIVE_TEXT) -> str:
+    """Return redacted text with an explicit persistence/prompt size bound."""
+    redacted = redact_sensitive_text(str(value))
+    if len(redacted) <= limit:
+        return redacted
+    suffix = f"... [truncated {len(redacted) - limit} chars]"
+    return redacted[: max(0, limit - len(suffix))] + suffix

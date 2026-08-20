@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -55,6 +55,16 @@ class SemanticFinding:
 
 
 @dataclass(frozen=True)
+class BehavioralContract:
+    """Complete repair acceptance criteria carried from analysis to patching."""
+
+    must_fix: tuple[str, ...]
+    must_preserve: tuple[str, ...]
+    evidence: tuple[str, ...]
+    rationale: str
+
+
+@dataclass(frozen=True)
 class AnalysisRequest:
     """Deterministic evidence and selected files for one provider request."""
 
@@ -65,6 +75,7 @@ class AnalysisRequest:
     verifications: tuple[VerificationEvidence, ...]
     deterministic_findings: tuple[str, ...]
     files: tuple[FileContext, ...]
+    task: str | None = None
 
 
 @dataclass(frozen=True)
@@ -72,14 +83,18 @@ class AnalysisResponse:
     """Validated provider analysis."""
 
     findings: tuple[SemanticFinding, ...]
+    behavioral_contract: BehavioralContract | None = None
 
 
 @dataclass(frozen=True)
 class PatchRequest:
-    """One selected finding and its exact source context."""
+    """One selected finding, source context, and complete repair contract."""
 
     finding: SemanticFinding
     file: FileContext
+    behavioral_contract: BehavioralContract = field(
+        default_factory=lambda: BehavioralContract((), (), (), "")
+    )
 
 
 @dataclass(frozen=True)

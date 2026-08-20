@@ -43,6 +43,26 @@ def test_valid_structured_response_parsing() -> None:
     assert response.findings[0].confidence == 0.93
 
 
+def test_analysis_response_parses_optional_behavioral_contract() -> None:
+    response = parse_analysis_response(
+        json.dumps(
+            {
+                "findings": [valid_finding()],
+                "behavioral_contract": {
+                    "must_fix": ["Accept equality."],
+                    "must_preserve": ["Keep smaller requests valid."],
+                    "evidence": ["The boundary test fails."],
+                    "rationale": "One edit must satisfy both behaviors.",
+                },
+            }
+        )
+    )
+
+    assert response.behavioral_contract is not None
+    assert response.behavioral_contract.must_fix == ("Accept equality.",)
+    assert response.behavioral_contract.must_preserve == ("Keep smaller requests valid.",)
+
+
 def test_malformed_json_is_rejected() -> None:
     with pytest.raises(ResponseValidationError, match="malformed JSON"):
         parse_analysis_response("not json")

@@ -39,9 +39,11 @@ from repo_doctor.sessions import SessionError, session_file_path
 class DeterministicRepairProvider:
     def __init__(self, *, old_text: str = "return requested < stock") -> None:
         self.old_text = old_text
+        self.analysis_request = None
         self.patch_request = None
 
     def analyze(self, request):
+        self.analysis_request = request
         return AnalysisResponse(
             (
                 SemanticFinding(
@@ -416,6 +418,30 @@ def test_mcp_ai_repair_uses_read_hash_and_never_writes_locally(
     assert '"expected_hash"' in stored
 
 
+def test_mcp_ai_repair_plumbs_task_and_contract_without_changing_session_flow(
+    tmp_path: Path, state_root: Path
+) -> None:
+    repair_repository(tmp_path)
+    state = SharedBackendState()
+    provider = DeterministicRepairProvider()
+
+    outcome = execute_mcp_ai_fix(
+        tmp_path,
+        provider,
+        task="Accept exact stock while preserving existing behavior.",
+        backend_factory=backend_factory(state),
+    )
+
+    assert outcome.status == RepairPhase.PATCH_PENDING.value
+    assert provider.analysis_request.task == (
+        "Accept exact stock while preserving existing behavior."
+    )
+    contract = provider.patch_request.behavioral_contract
+    assert any("Satisfy the user task" in item for item in contract.must_fix)
+    assert any("boundary-1" in item for item in contract.must_fix)
+    assert outcome.session.pending_operations
+
+
 def test_malformed_ai_patch_is_rejected_before_toolhub_mutation(
     tmp_path: Path, state_root: Path
 ) -> None:
@@ -741,6 +767,55 @@ def test_local_ai_fix_remains_the_default_cli_path(tmp_path: Path, monkeypatch) 
     assert response.exit_code == 0, response.output
     assert observed["root"] == tmp_path.resolve()
     assert ToolBackendKind.LOCAL.value not in response.output
+
+
+def test_mcp_fix_cli_passes_task_but_rejects_local_report_json(
+    tmp_path: Path, monkeypatch
+) -> None:
+    observed = {}
+    monkeypatch.setattr("repo_doctor.cli.provider_from_env", lambda **kwargs: object())
+
+    def mcp_fix(root, provider, **kwargs):
+        observed.update(root=root, provider=provider, kwargs=kwargs)
+        return SimpleNamespace(status="no_candidate", session=None, diff="")
+
+    monkeypatch.setattr("repo_doctor.cli.execute_mcp_ai_fix", mcp_fix)
+    task_response = CliRunner().invoke(
+        app,
+        [
+            "fix",
+            str(tmp_path),
+            "--ai",
+            "--tool-backend",
+            "mcp",
+            "--task",
+            "Preserve the public API.",
+        ],
+    )
+
+    assert task_response.exit_code == 0, task_response.output
+    assert observed["kwargs"]["task"] == "Preserve the public API."
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("provider and MCP workflow must not be called")
+
+    monkeypatch.setattr("repo_doctor.cli.provider_from_env", forbidden)
+    monkeypatch.setattr("repo_doctor.cli.execute_mcp_ai_fix", forbidden)
+    report_response = CliRunner().invoke(
+        app,
+        [
+            "fix",
+            str(tmp_path),
+            "--ai",
+            "--tool-backend",
+            "mcp",
+            "--report-json",
+            str(tmp_path / "report.json"),
+        ],
+    )
+
+    assert report_response.exit_code == 2
+    assert "available only with --tool-backend local" in report_response.output
 
 
 @pytest.mark.integration

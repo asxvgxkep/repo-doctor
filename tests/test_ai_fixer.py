@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 
@@ -10,6 +11,9 @@ from repo_doctor.models import CommandResult, ScanResult
 
 
 class RepairProvider:
+    def __init__(self) -> None:
+        self.patch_request = None
+
     def analyze(self, request):
         return AnalysisResponse(
             (
@@ -30,6 +34,7 @@ class RepairProvider:
         )
 
     def generate_patch(self, request):
+        self.patch_request = request
         return PatchProposal(
             "inventory.py",
             "return requested < stock",
@@ -176,3 +181,119 @@ def test_ai_fix_refuses_to_patch_without_verification_commands(tmp_path: Path) -
 
     with pytest.raises(VerificationError, match="at least one"):
         execute_ai_fix(tmp_path, RepairProvider(), scan_function=scanner)
+
+
+def test_complete_behavioral_contract_enters_patch_request(tmp_path: Path) -> None:
+    initialize_repository(tmp_path)
+    provider = RepairProvider()
+
+    execute_ai_fix(
+        tmp_path,
+        provider,
+        task="Accept exact stock and preserve smaller requests.",
+        scan_function=lambda root, _timeout: verification_result(root),
+    )
+
+    assert provider.patch_request is not None
+    contract = provider.patch_request.behavioral_contract
+    assert any("Satisfy the user task" in item for item in contract.must_fix)
+    assert any("boundary-1" in item for item in contract.must_fix)
+    assert any("passing baseline verification" in item for item in contract.must_preserve)
+
+
+def test_failed_verification_report_preserves_attempted_patch_before_rollback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    original = initialize_repository(tmp_path)
+    report_path = tmp_path.parent / f"{tmp_path.name}-repair-report.json"
+    calls = 0
+
+    def scanner(root: Path, timeout: int) -> ScanResult:
+        nonlocal calls
+        calls += 1
+        result = verification_result(root, passed=calls == 1)
+        if calls == 2:
+            result.commands[0] = CommandResult(
+                "Python tests",
+                ("pytest", "-q"),
+                1,
+                "1 passed, 1 failed",
+                "assertion failed",
+                0.2,
+            )
+        return result
+
+    from repo_doctor.ai import fixer as fixer_module
+
+    real_rollback = fixer_module.rollback_patch
+    observed_before_rollback = {}
+
+    def checking_rollback(prepared) -> None:
+        observed_before_rollback.update(json.loads(report_path.read_text(encoding="utf-8")))
+        real_rollback(prepared)
+
+    monkeypatch.setattr(fixer_module, "rollback_patch", checking_rollback)
+
+    outcome = execute_ai_fix(
+        tmp_path,
+        RepairProvider(),
+        prompt_variant="candidate-v3",
+        report_path=report_path,
+        scan_function=scanner,
+    )
+
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert outcome.status == "rolled_back"
+    assert observed_before_rollback["final_status"] == "verification_failed_pending_rollback"
+    assert "requested <= stock" in observed_before_rollback["patch"]["diff"]
+    assert report["prompt_variant"] == "candidate-v3"
+    assert report["selected_finding"]["id"] == "boundary-1"
+    assert report["behavioral_contract"]["must_fix"]
+    assert report["patch_applied"] is True
+    assert "requested <= stock" in report["patch"]["diff"]
+    assert report["verification"]["commands"][0]["command"] == ["pytest", "-q"]
+    assert report["verification"]["commands"][0]["returncode"] == 1
+    assert report["verification"]["commands"][0]["stdout_summary"] == "1 passed, 1 failed"
+    assert report["verification"]["commands"][0]["stderr_summary"] == "assertion failed"
+    assert report["rollback_attempted"] is True
+    assert report["rollback_succeeded"] is True
+    assert report["final_status"] == "rolled_back"
+    assert (tmp_path / "inventory.py").read_bytes() == original
+
+
+def test_repair_report_redacts_and_bounds_secrets(tmp_path: Path, monkeypatch) -> None:
+    secret = "provider-secret-value-123456"
+    monkeypatch.setenv("REPO_DOCTOR_API_KEY", secret)
+    initialize_repository(tmp_path)
+    report_path = tmp_path.parent / f"{tmp_path.name}-secret-report.json"
+    calls = 0
+
+    def scanner(root: Path, timeout: int) -> ScanResult:
+        nonlocal calls
+        calls += 1
+        result = verification_result(root, passed=calls == 1)
+        if calls == 2:
+            result.commands[0] = CommandResult(
+                "Python tests",
+                ("pytest",),
+                1,
+                f"Authorization: Bearer {secret}",
+                f"api_key={secret}",
+                0.1,
+            )
+        return result
+
+    execute_ai_fix(
+        tmp_path,
+        RepairProvider(),
+        task=f"password={secret}\n" + "x" * 20_000,
+        report_path=report_path,
+        scan_function=scanner,
+    )
+
+    report_bytes = report_path.read_bytes()
+    report = json.loads(report_bytes)
+    assert secret.encode() not in report_bytes
+    assert "[REDACTED]" in repr(report)
+    assert len(report["behavioral_contract"]["must_fix"][0]) <= 8_000

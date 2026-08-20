@@ -6,7 +6,13 @@ import json
 from typing import Any
 
 from .errors import ResponseValidationError
-from .models import AnalysisResponse, PatchProposal, SemanticFinding, Severity
+from .models import (
+    AnalysisResponse,
+    BehavioralContract,
+    PatchProposal,
+    SemanticFinding,
+    Severity,
+)
 from .paths import normalize_relative_path
 
 FINDING_FIELDS = {
@@ -23,6 +29,7 @@ FINDING_FIELDS = {
     "suggested_fix",
 }
 PATCH_FIELDS = {"file", "old_text", "new_text", "reason", "confidence"}
+CONTRACT_FIELDS = {"must_fix", "must_preserve", "evidence", "rationale"}
 
 
 def _decode(raw: str) -> Any:
@@ -97,9 +104,39 @@ def _finding(value: Any, index: int) -> SemanticFinding:
     )
 
 
+def _text_items(value: Any, field: str) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise ResponseValidationError(f"AI field '{field}' must be a JSON array.")
+    if len(value) > 50:
+        raise ResponseValidationError(f"AI field '{field}' contains too many items (maximum 50).")
+    return tuple(_text(item, f"{field}[{index}]") for index, item in enumerate(value))
+
+
+def _behavioral_contract(value: Any) -> BehavioralContract:
+    item = _object(value, CONTRACT_FIELDS, "Behavioral contract")
+    return BehavioralContract(
+        must_fix=_text_items(item["must_fix"], "must_fix"),
+        must_preserve=_text_items(item["must_preserve"], "must_preserve"),
+        evidence=_text_items(item["evidence"], "evidence"),
+        rationale=_text(item["rationale"], "rationale"),
+    )
+
+
 def parse_analysis_response(raw: str) -> AnalysisResponse:
-    """Parse the exact analysis schema, rejecting missing or invented fields."""
-    data = _object(_decode(raw), {"findings"}, "AI analysis response")
+    """Parse the findings schema plus an optional structured repair contract."""
+    decoded = _decode(raw)
+    if not isinstance(decoded, dict):
+        raise ResponseValidationError("AI analysis response must be a JSON object.")
+    allowed = {"findings", "behavioral_contract"}
+    missing = {"findings"} - decoded.keys()
+    extra = decoded.keys() - allowed
+    if missing:
+        raise ResponseValidationError("AI analysis response is missing fields: findings.")
+    if extra:
+        raise ResponseValidationError(
+            "AI analysis response has unexpected fields: " + ", ".join(sorted(extra)) + "."
+        )
+    data = decoded
     values = data["findings"]
     if not isinstance(values, list):
         raise ResponseValidationError("AI field 'findings' must be a JSON array.")
@@ -109,7 +146,9 @@ def parse_analysis_response(raw: str) -> AnalysisResponse:
     identifiers = [finding.id for finding in findings]
     if len(identifiers) != len(set(identifiers)):
         raise ResponseValidationError("AI finding IDs must be unique.")
-    return AnalysisResponse(findings)
+    contract_value = data.get("behavioral_contract")
+    contract = _behavioral_contract(contract_value) if contract_value is not None else None
+    return AnalysisResponse(findings, contract)
 
 
 def parse_patch_response(raw: str) -> PatchProposal:
