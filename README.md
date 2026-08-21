@@ -92,7 +92,7 @@ rollback behavior.
 
 ## AI Repair in Action
 
-A real end-to-end repair: Repo Doctor previews a constrained AI patch, applies it, reruns verification, and keeps the change only after the checks pass.
+A real end-to-end repair: Repo Doctor analyzes repository evidence, builds a behavioral contract, generates a constrained AI patch, reruns verification, and keeps the change only after checks pass. Failed repairs are rolled back with structured evidence reports.
 
 ![Repo Doctor AI repair demo](docs/demo.png)
 
@@ -108,9 +108,9 @@ A real end-to-end repair: Repo Doctor previews a constrained AI patch, applies i
 - **Verification and automatic rollback** keep a repair only if every discovered check passes and
   the deterministic score does not regress.
 
-## Verified in v0.2.0
+## Verified in v0.3.0
 
-- Automated test suite: **73 passed, 1 skipped**.
+- Automated test suite: **153 passed, 4 skipped**.
 - Repo Doctor self-scan: **100/100**.
 - Real DeepSeek API semantic analysis and AI dry-run tested.
 - Real AI fix, verification, and keep workflow tested end to end.
